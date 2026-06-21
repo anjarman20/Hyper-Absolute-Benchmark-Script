@@ -137,13 +137,13 @@ setup_colors() {
     C_BLUE=''; C_MAGENTA=''; C_CYAN=''; C_WHITE=''
   fi
 
-  # Detect UTF-8 support for box-drawing characters
-  if [ "$CONFIG_NO_COLOR" = true ] || [ "$(locale 2>/dev/null | grep -c 'UTF-8\|utf8')" -eq 0 ]; then
-    C_TL="+"; C_TR="+"; C_BL="+"; C_BR="+"
-    C_H="-"; C_V="|"
-  else
+  # Box-drawing: ASCII by default (always safe), Unicode only with HABS_UNICODE=1
+  if [ "${HABS_UNICODE:-0}" = "1" ] && [ "$CONFIG_NO_COLOR" = false ]; then
     C_TL="┌"; C_TR="┐"; C_BL="└"; C_BR="┘"
     C_H="─"; C_V="│"
+  else
+    C_TL="+"; C_TR="+"; C_BL="+"; C_BR="+"
+    C_H="-"; C_V="|"
   fi
 }
 
@@ -382,7 +382,7 @@ gather_system_info() {
           [ -n "$max_freq" ] && SYS_CPU_FREQ=$(awk "BEGIN {printf \"%.2f GHz\", $max_freq/1000}" 2>/dev/null || echo "")
         fi
 
-        SYS_CPU_CACHE=$(echo "$lscpu_out" | awk -F: '/L[1-3]/ {gsub(/^ */,"",$1); gsub(/^ /,"",$2); printf "%s: %s, ", $1, $2}' | sed 's/, $//') || true
+        SYS_CPU_CACHE=$(echo "$lscpu_out" | awk -F: '/^L[1-3][di]? cache:/ {gsub(/^ */,"",$1); gsub(/^ /,"",$2); printf "%s: %s, ", $1, $2}' | sed 's/, $//') || true
         SYS_CPU_FLAGS=$(echo "$lscpu_out" | awk -F: '/^[Ff]lags/ {print $2}' | xargs) || true
       fi
     fi
@@ -441,10 +441,23 @@ print_system_info() {
   info_row "CPU Model"      "${SYS_CPU_MODEL}"
   info_row "CPU Cores"      "${SYS_CPU_CORES} cores / ${SYS_CPU_THREADS} threads"
   info_row "CPU Freq"       "${SYS_CPU_FREQ}"
-  [ -n "$SYS_CPU_CACHE" ] && info_row "CPU Cache"     "${SYS_CPU_CACHE}"
-  info_row "RAM"            "$(format_bytes $SYS_RAM_TOTAL) total / $(format_bytes $SYS_RAM_USED) used"
+  if [ -n "$SYS_CPU_CACHE" ]; then
+    IFS=',' read -ra cache_lines <<< "$SYS_CPU_CACHE"
+    for cl in "${cache_lines[@]}"; do
+      cl=$(echo "$cl" | xargs)
+      case "$cl" in
+        L1d*)   info_row "L1d Cache"  "${cl#L1d cache: }" ;;
+        L1i*)   info_row "L1i Cache"  "${cl#L1i cache: }" ;;
+        L2*)    info_row "L2 Cache"   "${cl#L2 cache: }" ;;
+        L3*)    info_row "L3 Cache"   "${cl#L3 cache: }" ;;
+      esac
+    done
+  fi
+  local ram_pct=0
+  [ "$SYS_RAM_TOTAL" -gt 0 ] && ram_pct=$(( SYS_RAM_USED * 100 / SYS_RAM_TOTAL ))
+  info_row "RAM"            "$(format_bytes $SYS_RAM_USED) used / $(format_bytes $SYS_RAM_TOTAL) total (${ram_pct}%)"
   info_row "Swap"           "$(format_bytes $SYS_SWAP_TOTAL) total"
-  info_row "Disk"           "${SYS_DISK_TOTAL} total / ${SYS_DISK_USED} used (${SYS_DISK_PCT})"
+  info_row "Disk"           "${SYS_DISK_USED} used / ${SYS_DISK_TOTAL} total (${SYS_DISK_PCT})"
   info_row "Filesystem"     "${SYS_DISK_FSTYPE} on ${SYS_DISK_MOUNT}"
   info_row "Virt"           "${SYS_VIRT}"
   info_row "Load Avg"       "${SYS_LOAD}"
