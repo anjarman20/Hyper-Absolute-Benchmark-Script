@@ -114,6 +114,15 @@ SYS_DISK_FSTYPE=""
 SYS_VIRT=""
 SYS_LOAD=""
 SYS_ARCH=""
+SYS_AES=""
+SYS_VMX=""
+SYS_ISP=""
+SYS_ASN=""
+SYS_ORG=""
+SYS_LOCATION=""
+SYS_COUNTRY=""
+SYS_IPV4=false
+SYS_IPV6=false
 
 # ============================================================
 # COLOR DEFINITIONS
@@ -238,11 +247,11 @@ download_url() {
 
 print_header() {
   echo ""
-  echo -e "  ${C_CYAN}__  __    _    ____  ______${C_RESET}"
-  echo -e "  ${C_CYAN}|  \/  |  / \  | __ )|__  / |${C_RESET}  ${C_BOLD}Hyper Absolute Benchmark Script${C_RESET}"
-  echo -e "  ${C_CYAN}| |\/| | / _ \ |  _ \  / /| |${C_RESET}  ${C_DIM}Version ${VERSION}${C_RESET}"
-  echo -e "  ${C_CYAN}| |  | |/ ___ \| |_) |/ /_|_|${C_RESET}  ${C_DIM}Modern Linux Benchmark Tool${C_RESET}"
-  echo -e "  ${C_CYAN}|_|  |_/_/   \_\____/____(_)${C_RESET}"
+  echo -e "  ${C_CYAN} _   _    _     ____   ____  ${C_RESET}"
+  echo -e "  ${C_CYAN}| | | |  / \   | __ ) / ___| ${C_RESET}  ${C_BOLD}Hyper Absolute Benchmark Script${C_RESET}"
+  echo -e "  ${C_CYAN}| |_| | / _ \  |  _ \ \___ \\ ${C_RESET}  ${C_DIM}Version ${VERSION}${C_RESET}"
+  echo -e "  ${C_CYAN}|  _  |/ ___ \\| |_) | ___) |${C_RESET}  ${C_DIM}Modern Linux Benchmark Tool${C_RESET}"
+  echo -e "  ${C_CYAN}|_| |_/_/   \\_\\____/|____/ ${C_RESET}"
   echo ""
   local cols=58
   printf "  ${C_DIM}%s${C_RESET}\n" "$(printf '%*s' "$cols" | tr ' ' "${C_H}")"
@@ -425,8 +434,36 @@ gather_system_info() {
     SYS_VIRT="none/detect"
   fi
 
+  if [ -f /proc/cpuinfo ]; then
+    SYS_AES=$(grep -q 'aes' /proc/cpuinfo 2>/dev/null && echo "Enabled" || echo "Disabled")
+    SYS_VMX=$(grep -q 'vmx\|svm' /proc/cpuinfo 2>/dev/null && echo "Enabled" || echo "Disabled")
+  fi
+
   if [ -f /proc/loadavg ]; then
     SYS_LOAD=$(awk '{print $1 ", " $2 ", " $3}' /proc/loadavg) || true
+  fi
+
+  # IPv4/IPv6 connectivity check
+  if command_exists ping; then
+    ping -4 -c 1 -W 2 1.1.1.1 >/dev/null 2>&1 && SYS_IPV4=true || SYS_IPV4=false
+    ping -6 -c 1 -W 2 2001:4860:4860::8888 >/dev/null 2>&1 && SYS_IPV6=true || SYS_IPV6=false
+  fi
+
+  # Network info via ip-api.com (non-blocking, short timeout)
+  if command_exists curl && [ "$SYS_IPV4" = true ]; then
+    local ip_info
+    ip_info=$(curl -s --max-time 3 http://ip-api.com/json/ 2>/dev/null) || true
+    if [ -n "$ip_info" ]; then
+      SYS_ISP=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('isp','?'))" 2>/dev/null || echo "")
+      SYS_ASN=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('as','?'))" 2>/dev/null || echo "")
+      SYS_ORG=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('org','?'))" 2>/dev/null || echo "")
+      [ -z "$SYS_ORG" ] && SYS_ORG=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('org','?'))" 2>/dev/null || echo "")
+      SYS_COUNTRY=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('country','?'))" 2>/dev/null || echo "")
+      local city region
+      city=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('city',''))" 2>/dev/null || echo "")
+      region=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('regionName',''))" 2>/dev/null || echo "")
+      [ -n "$city" ] && [ -n "$region" ] && SYS_LOCATION="${city}, ${region}" || SYS_LOCATION="$city$region"
+    fi
   fi
 
   log_success "System information gathered"
@@ -460,7 +497,19 @@ print_system_info() {
   info_row "Disk"           "${SYS_DISK_USED} used / ${SYS_DISK_TOTAL} total (${SYS_DISK_PCT})"
   info_row "Filesystem"     "${SYS_DISK_FSTYPE} on ${SYS_DISK_MOUNT}"
   info_row "Virt"           "${SYS_VIRT}"
+  info_row "AES-NI"         "${SYS_AES}"
+  info_row "VM-x/AMD-V"     "${SYS_VMX}"
   info_row "Load Avg"       "${SYS_LOAD}"
+  if [ -n "$SYS_ISP" ]; then
+    info_row "ISP"           "${SYS_ISP}"
+    [ -n "$SYS_ASN" ] && info_row "ASN"   "${SYS_ASN}"
+    [ -n "$SYS_LOCATION" ] && info_row "Location" "${SYS_LOCATION}"
+  fi
+  local ipv4_status="${SYS_IPV4}"
+  local ipv6_status="${SYS_IPV6}"
+  [ "$SYS_IPV4" = true ] && ipv4_status="Online" || ipv4_status="Offline"
+  [ "$SYS_IPV6" = true ] && ipv6_status="Online" || ipv6_status="Offline"
+  info_row "IPv4/IPv6"      "${ipv4_status} / ${ipv6_status}"
   section_end
 }
 
@@ -811,42 +860,21 @@ bench_memory() {
 }
 
 # ============================================================
-# DISK BENCHMARK (fio primary, dd fallback)
+# DISK BENCHMARK (fio — 4k/64k/512k/1m mixed 50/50, dd fallback)
 # ============================================================
-
-_run_fio_test() {
-  local name=$1 bs=$2 rw=$3 iodepth=$4 size=$5 extra=$6
-  local fio_file=$7
-  local runtime=15
-  [ "$CONFIG_QUICK" = true ] && runtime=8
-  [ "$CONFIG_FULL" = true ] && runtime=30
-
-  fio --name="$name" --ioengine=libaio --direct=1 --bs="$bs" --iodepth="$iodepth" \
-      --size="$size" --readwrite="$rw" $extra --filename="$fio_file" \
-      --output-format=json --runtime="$runtime" --time_based 2>/dev/null
-}
-
-_parse_fio_result() {
-  local fio_out=$1 field=$2 sub=$3
-  echo "$fio_out" | python3 -c "
-import sys,json
-try:
-    d=json.load(sys.stdin)
-    j=d.get('jobs',[{}])[0]
-    r=j.get('$sub',{})
-    print(r.get('$field',0))
-except:
-    print(0)
-" 2>/dev/null || echo 0
-}
 
 bench_disk() {
   section_start "Disk Benchmark"
   local temp_dir="${TMPDIR:-/tmp}"
   [ ! -w "$temp_dir" ] && temp_dir="."
 
-  local fio_file="$temp_dir/habs_disk_test.$$"
+  local fio_file="$temp_dir/habs_disk.$$"
   TEMP_FILES+=("$fio_file")
+
+  # ZFS space inflation check
+  local zfs_inflate=1
+  [ -f "/sys/module/zfs/parameters/spa_asize_inflation" ] && zfs_inflate=$(cat /sys/module/zfs/parameters/spa_asize_inflation 2>/dev/null || echo 1)
+  local zfs_mul=$((zfs_inflate * 2))
 
   local fio_avail=false
   if command_exists fio; then
@@ -856,149 +884,122 @@ bench_disk() {
   fi
 
   if [ "$fio_avail" = true ]; then
-    local test_size="1G"
-    [ "$CONFIG_QUICK" = true ] && test_size="512M"
-    [ "$CONFIG_FULL" = true ] && test_size="2G"
+    local runtime=20
+    [ "$CONFIG_QUICK" = true ] && runtime=10
+    [ "$CONFIG_FULL" = true ] && runtime=40
+    local fio_size="1G"
+    [ "$CONFIG_QUICK" = true ] && fio_size="512M"
+    [ "$CONFIG_FULL" = true ] && fio_size="2G"
 
-    # Sequential 1M write
-    echo -e "  ${C_BOLD}Sequential 1M write (fio)...${C_RESET}"
-    local out_sq_w
-    out_sq_w=$(_run_fio_test "seqwr" "1M" "write" 1 "$test_size" "--fsync=1" "$fio_file")
-    local bw_sq_w
-    bw_sq_w=$(_parse_fio_result "$out_sq_w" "bw" "write")
-    RESULT_DISK_1M_WRITE=$(awk "BEGIN {printf \"%.2f\", $bw_sq_w / 1000}" 2>/dev/null || echo 0)
-    echo -e "  ${C_GREEN}✓${C_RESET} 1M Write: ${C_BOLD}${RESULT_DISK_1M_WRITE}${C_RESET} MB/s"
-
-    # Sequential 1M read
-    echo -e "  ${C_BOLD}Sequential 1M read (fio)...${C_RESET}"
-    is_root && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
-    local out_sq_r
-    out_sq_r=$(_run_fio_test "seqrd" "1M" "read" 1 "$test_size" "" "$fio_file")
-    local bw_sq_r
-    bw_sq_r=$(_parse_fio_result "$out_sq_r" "bw" "read")
-    RESULT_DISK_1M_READ=$(awk "BEGIN {printf \"%.2f\", $bw_sq_r / 1000}" 2>/dev/null || echo 0)
-    echo -e "  ${C_GREEN}✓${C_RESET} 1M Read:  ${C_BOLD}${RESULT_DISK_1M_READ}${C_RESET} MB/s"
-
-    rm -f "$fio_file"
-
-    # Random 4K QD=1 read
-    echo -e "  ${C_BOLD}Random 4K read QD=1 (fio)...${C_RESET}"
-    local out_rnd_r
-    out_rnd_r=$(_run_fio_test "rndrd" "4K" "randread" 1 "$test_size" "" "$fio_file")
-    RESULT_DISK_4K_READ=$(_parse_fio_result "$out_rnd_r" "iops" "read")
-    local lat_rnd_r
-    lat_rnd_r=$(_parse_fio_result "$out_rnd_r" "mean" "read" | awk '{printf "%.0f", $1/1000}' 2>/dev/null || echo 0)
-    [ -z "$RESULT_DISK_4K_READ" ] && RESULT_DISK_4K_READ=0
-    echo -e "  ${C_GREEN}✓${C_RESET} 4K Read QD=1: ${C_BOLD}${RESULT_DISK_4K_READ}${C_RESET} IOPS (${lat_rnd_r}us)"
-
-    rm -f "$fio_file"
-
-    # Random 4K mixed QD=32 (70/30 r/w)
-    echo -e "  ${C_BOLD}Random 4K mixed QD=32 (fio)...${C_RESET}"
-    local out_rnd_mix
-    out_rnd_mix=$(_run_fio_test "rndmix" "4K" "randrw" 32 "$test_size" "--rwmixread=70" "$fio_file")
-    local r_iops w_iops r_lat w_lat
-    r_iops=$(_parse_fio_result "$out_rnd_mix" "iops" "read")
-    w_iops=$(_parse_fio_result "$out_rnd_mix" "iops" "write")
-    r_lat=$(_parse_fio_result "$out_rnd_mix" "mean" "read" | awk '{printf "%.0f", $1/1000}' 2>/dev/null || echo 0)
-    w_lat=$(_parse_fio_result "$out_rnd_mix" "mean" "write" | awk '{printf "%.0f", $1/1000}' 2>/dev/null || echo 0)
-    RESULT_ADV_FIO_RND_R_IOPS=${r_iops:-0}
-    RESULT_ADV_FIO_RND_W_IOPS=${w_iops:-0}
-    echo -e "  ${C_GREEN}✓${C_RESET} 4K Mixed QD=32: ${C_BOLD}${RESULT_ADV_FIO_RND_R_IOPS}${C_RESET} rd / ${C_BOLD}${RESULT_ADV_FIO_RND_W_IOPS}${C_RESET} wr IOPS"
-    echo -e "  ${C_DIM}   Latency: ${r_lat}us rd / ${w_lat}us wr${C_RESET}"
-
-    rm -f "$fio_file"
-
-    # Disk latency via fio
-    echo -e "  ${C_BOLD}Disk latency (fio)...${C_RESET}"
-    local out_lat
-    out_lat=$(_run_fio_test "latency" "4K" "randread" 1 "1G" "" "$fio_file" 2>/dev/null)
-    local lat_clat
-    lat_clat=$(echo "$out_lat" | python3 -c "
-import sys,json
-try:
-    d=json.load(sys.stdin)
-    j=d.get('jobs',[{}])[0]
-    r=j.get('read',{})
-    lat=r.get('clat_ns',{}).get('percentile',{})
-    p50=lat.get('50.000000',0)
-    p95=lat.get('95.000000',0)
-    p99=lat.get('99.000000',0)
-    print(f'{p50/1000:.0f},{p95/1000:.0f},{p99/1000:.0f}')
-except:
-    print('0,0,0')
-" 2>/dev/null || echo "0,0,0")
-    local p50 p95 p99
-    IFS=',' read -r p50 p95 p99 <<< "$lat_clat"
-    echo -e "  ${C_GREEN}✓${C_RESET} Latency: ${C_BOLD}${p50}us${C_RESET} (p50) / ${p95}us (p95) / ${p99}us (p99)"
-
-  else
-    # Fallback: dd (basic sequential test)
+    # ZFS-aware space check
+    local need_kb=0
+    case "$fio_size" in *G) need_kb=$((${fio_size%G} * 1048576 * zfs_mul)) ;; *M) need_kb=$((${fio_size%M} * 1024 * zfs_mul)) ;; esac
     local avail_kb=0
     command_exists df && avail_kb=$(df -k "$temp_dir" 2>/dev/null | tail -1 | awk '{print $4}')
-    local count_1m=1024 count_4k=256000
-    [ "$CONFIG_QUICK" = true ] && count_1m=512 && count_4k=128000
-    [ "$CONFIG_FULL" = true ] && count_1m=2048 && count_4k=512000
-
-    local needed_kb=$((count_1m * 1024 + count_4k * 4))
-    if [ "$avail_kb" -gt 0 ] && [ "$avail_kb" -lt "$needed_kb" ]; then
-      local scale_down=$((avail_kb / needed_kb))
-      [ "$scale_down" -lt 1 ] && scale_down=1
-      count_1m=$((count_1m * scale_down / 2))
-      count_4k=$((count_4k * scale_down / 2))
-      [ "$count_1m" -lt 16 ] && count_1m=16
-      [ "$count_4k" -lt 4096 ] && count_4k=4096
-      log_warn "Disk space limited, reducing test size"
+    if [ "$avail_kb" -gt 0 ] && [ "$avail_kb" -lt "$need_kb" ]; then
+      fio_size="256M"
+      log_warn "Disk space limited, using ${fio_size}"
     fi
 
-    # 1M sequential write
-    echo -e "  ${C_BOLD}1M sequential write (dd fallback)...${C_RESET}"
-    local out_1m_w
-    out_1m_w=$(dd if=/dev/zero of="$fio_file" bs=1M count="$count_1m" oflag=direct 2>&1) || true
-    RESULT_DISK_1M_WRITE=$(echo "$out_1m_w" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
-    [ -z "$RESULT_DISK_1M_WRITE" ] && RESULT_DISK_1M_WRITE=0
-    echo -e "  ${C_GREEN}✓${C_RESET} 1M Write: ${C_BOLD}${RESULT_DISK_1M_WRITE}${C_RESET} MB/s"
+    echo -e "  ${C_DIM}Generating fio test file (${fio_size})...${C_RESET}"
+    fio --name=setup --ioengine=libaio --rw=read --bs=64k --iodepth=64 --numjobs=2 \
+        --size="$fio_size" --runtime=1 --filename="$fio_file" --direct=1 --minimal &>/dev/null || true
 
-    # 1M sequential read
-    echo -e "  ${C_BOLD}1M sequential read (dd fallback)...${C_RESET}"
-    is_root && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
-    local out_1m_r
-    out_1m_r=$(dd if="$fio_file" of=/dev/null bs=1M iflag=direct 2>&1) || true
-    RESULT_DISK_1M_READ=$(echo "$out_1m_r" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
-    [ -z "$RESULT_DISK_1M_READ" ] && RESULT_DISK_1M_READ=0
-    echo -e "  ${C_GREEN}✓${C_RESET} 1M Read:  ${C_BOLD}${RESULT_DISK_1M_READ}${C_RESET} MB/s"
+    local block_sizes=("4k" "64k" "512k" "1m")
+    local bs_labels=("4K" "64K" "512K" "1M")
+    local disk_results=()
 
-    rm -f "$fio_file"
+    echo -e "  ${C_DIM}fio mixed R+W 50/50 by block size:${C_RESET}"
+    local bi=0
+    for bs in "${block_sizes[@]}"; do
+      echo -ne "  ${C_BOLD}  ${bs}...${C_RESET}" >&2
+      local test_out
+      test_out=$(timeout $((runtime + 10)) fio --name="${bs}" --ioengine=libaio --rw=randrw --rwmixread=50 \
+          --bs="$bs" --iodepth=64 --numjobs=2 --size="$fio_size" --runtime="$runtime" \
+          --gtod_reduce=1 --direct=1 --filename="$fio_file" --group_reporting --minimal 2>/dev/null) || true
+      if [ -n "$test_out" ]; then
+        local ir=$(echo "$test_out" | awk -F';' '{print $8}')
+        local iw=$(echo "$test_out" | awk -F';' '{print $49}')
+        local br=$(echo "$test_out" | awk -F';' '{print $7}')
+        local bw=$(echo "$test_out" | awk -F';' '{print $48}')
+        local it=$((ir + iw))
+        local bt=$((br + bw))
+        disk_results+=("$bt" "$br" "$bw" "$it" "$ir" "$iw")
+        echo -e " ${C_GREEN}done${C_RESET}" >&2
+      else
+        disk_results+=(0 0 0 0 0 0)
+        echo -e " ${C_YELLOW}fail${C_RESET}" >&2
+      fi
+      bi=$((bi + 1))
+    done
 
-    # 4K sequential (small block) write
-    echo -e "  ${C_BOLD}4K sequential write (dd fallback)...${C_RESET}"
-    local out_4k_w
-    out_4k_w=$(dd if=/dev/zero of="$fio_file" bs=4k count="$count_4k" oflag=direct 2>&1) || true
-    RESULT_DISK_4K_WRITE=$(echo "$out_4k_w" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
-    [ -z "$RESULT_DISK_4K_WRITE" ] && RESULT_DISK_4K_WRITE=0
-    local iops_4k_w=0
-    [ "$(awk "BEGIN {print ($RESULT_DISK_4K_WRITE > 0)}")" -eq 1 ] && \
-      iops_4k_w=$(awk "BEGIN {printf \"%.0f\", $RESULT_DISK_4K_WRITE * 1000000 / 4096}" 2>/dev/null)
-    echo -e "  ${C_GREEN}✓${C_RESET} 4K Write: ${C_BOLD}${RESULT_DISK_4K_WRITE}${C_RESET} MB/s (${iops_4k_w} IOPS)"
+    local i4=$((0 * 6)) im=$((3 * 6))
+    RESULT_DISK_4K_READ=${disk_results[$((i4 + 1))]:-0}
+    RESULT_DISK_4K_WRITE=${disk_results[$((i4 + 2))]:-0}
+    RESULT_DISK_1M_READ=${disk_results[$((im + 1))]:-0}
+    RESULT_DISK_1M_WRITE=${disk_results[$((im + 2))]:-0}
+    RESULT_ADV_FIO_RND_R_IOPS=${disk_results[$((i4 + 4))]:-0}
+    RESULT_ADV_FIO_RND_W_IOPS=${disk_results[$((i4 + 5))]:-0}
 
-    # 4K sequential (small block) read
-    echo -e "  ${C_BOLD}4K sequential read (dd fallback)...${C_RESET}"
-    is_root && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
-    local out_4k_r
-    out_4k_r=$(dd if="$fio_file" of=/dev/null bs=4k iflag=direct 2>&1) || true
-    RESULT_DISK_4K_READ=$(echo "$out_4k_r" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
-    [ -z "$RESULT_DISK_4K_READ" ] && RESULT_DISK_4K_READ=0
-    local iops_4k_r=0
-    [ "$(awk "BEGIN {print ($RESULT_DISK_4K_READ > 0)}")" -eq 1 ] && \
-      iops_4k_r=$(awk "BEGIN {printf \"%.0f\", $RESULT_DISK_4K_READ * 1000000 / 4096}" 2>/dev/null)
-    echo -e "  ${C_GREEN}✓${C_RESET} 4K Read:  ${C_BOLD}${RESULT_DISK_4K_READ}${C_RESET} MB/s (${iops_4k_r} IOPS)"
+    echo ""
+    printf "  %-10s | %-20s | %-20s\n" "Block Size" "Write (MB/s)" "Read (MB/s)"
+    printf "  %-10s | %-20s | %-20s\n" "----------" "------------" "-----------"
+    for i in 0 1 2 3; do
+      local idx=$((i * 6))
+      local bw_w=$(awk "BEGIN {printf \"%.1f\", ${disk_results[$((idx + 2))]:-0}/1000}" 2>/dev/null)
+      local bw_r=$(awk "BEGIN {printf \"%.1f\", ${disk_results[$((idx + 1))]:-0}/1000}" 2>/dev/null)
+      local iops_w="${disk_results[$((idx + 5))]:-0}"
+      local iops_r="${disk_results[$((idx + 4))]:-0}"
+      local iw_fmt=$(awk "BEGIN {printf \"%.1fk\", ${iops_w}/1000}" 2>/dev/null)
+      local ir_fmt=$(awk "BEGIN {printf \"%.1fk\", ${iops_r}/1000}" 2>/dev/null)
+      printf "  %-10s | %-8s (%s IOPS) | %-8s (%s IOPS)\n" "${bs_labels[$i]}" "${bw_w}" "${iw_fmt}" "${bw_r}" "${ir_fmt}"
+    done
+
+  else
+    # dd fallback — 3 runs averaged
+    echo -e "  ${C_DIM}dd sequential test (3 runs, averaged):${C_RESET}"
+    local avail_kb=0
+    command_exists df && avail_kb=$(df -k "$temp_dir" 2>/dev/null | tail -1 | awk '{print $4}')
+    local dd_count=16384
+    [ "$CONFIG_QUICK" = true ] && dd_count=8192
+    [ "$CONFIG_FULL" = true ] && dd_count=32768
+    local w_vals=() r_vals=() w_sum=0 r_sum=0
+
+    for run in 1 2 3; do
+      echo -ne "  ${C_BOLD}  Run ${run}...${C_RESET}" >&2
+      local w_out=$(dd if=/dev/zero of="$fio_file" bs=64k count="$dd_count" oflag=direct 2>&1) || true
+      local w_val=$(echo "$w_out" | grep -oP '[\d.]+(?=\s+(MB|GB)/s)' | head -1)
+      [ -z "$w_val" ] && w_val=0
+      w_vals+=("$w_val")
+      w_sum=$(awk "BEGIN {print $w_sum + $w_val}" 2>/dev/null)
+
+      is_root && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+      local r_out=$(dd if="$fio_file" of=/dev/null bs=8k 2>&1) || true
+      local r_val=$(echo "$r_out" | grep -oP '[\d.]+(?=\s+(MB|GB)/s)' | head -1)
+      [ -z "$r_val" ] && r_val=0
+      r_vals+=("$r_val")
+      r_sum=$(awk "BEGIN {print $r_sum + $r_val}" 2>/dev/null)
+      echo -e " ${C_GREEN}done${C_RESET}" >&2
+      rm -f "$fio_file" 2>/dev/null || true
+    done
+
+    local w_avg=$(awk "BEGIN {printf \"%.2f\", $w_sum / 3}" 2>/dev/null)
+    local r_avg=$(awk "BEGIN {printf \"%.2f\", $r_sum / 3}" 2>/dev/null)
+    RESULT_DISK_1M_WRITE=$w_avg
+    RESULT_DISK_1M_READ=$r_avg
+
+    echo ""
+    printf "  %-10s | %-11s | %-11s | %-11s | %-11s\n" "" "Run 1" "Run 2" "Run 3" "Average"
+    printf "  %-10s | %-11s | %-11s | %-11s | %-11s\n" "----------" "-----" "-----" "-----" "-------"
+    printf "  %-10s | %-11s | %-11s | %-11s | %-11s\n" "Write" "${w_vals[0]} MB/s" "${w_vals[1]} MB/s" "${w_vals[2]} MB/s" "${w_avg} MB/s"
+    printf "  %-10s | %-11s | %-11s | %-11s | %-11s\n" "Read" "${r_vals[0]} MB/s" "${r_vals[1]} MB/s" "${r_vals[2]} MB/s" "${r_avg} MB/s"
   fi
 
-  # ioping disk latency (always try)
+  # ioping disk latency
   if command_exists ioping; then
+    echo ""
     echo -e "  ${C_BOLD}Disk latency (ioping)...${C_RESET}"
-    local ioping_out
-    ioping_out=$(ioping -c 5 -D "$temp_dir" 2>&1) || true
+    local ioping_out=$(ioping -c 5 -D "$temp_dir" 2>&1) || true
     RESULT_ADV_IOPING_LAT=$(echo "$ioping_out" | grep -oP '[\d.]+(?=\s+ms.*\()' | head -1)
     [ -z "$RESULT_ADV_IOPING_LAT" ] && RESULT_ADV_IOPING_LAT=$(echo "$ioping_out" | grep 'avg' | grep -oP '[\d.]+(?=\s*ms)' | head -1)
     [ -z "$RESULT_ADV_IOPING_LAT" ] && RESULT_ADV_IOPING_LAT=0
@@ -1164,6 +1165,37 @@ bench_network() {
     fi
   fi
 
+  # iperf3 multi-server test
+  if command_exists iperf3; then
+    echo -e "  ${C_BOLD}iperf3 multi-server test...${C_RESET}"
+    local iperf_servers=(
+      "speedtest.lax1.leaseweb.net|LeaseWeb LA|5201-5210"
+      "speedtest.sjc1.leaseweb.net|LeaseWeb SJC|5201-5210"
+      "iperf.he.net|Hurricane Electric|5201-5205"
+      "speedtest.frankfurt1.leaseweb.net|LeaseWeb FRA|5201-5210"
+      "iperf.online.net|Online.net|5201-5216"
+    )
+    printf "  %-28s | %-15s | %-10s | %-10s | %-7s\n" "Provider" "Location" "Send (Mbps)" "Recv (Mbps)" "Ping"
+    printf "  %-28s | %-15s | %-10s | %-10s | %-7s\n" "--------" "--------" "-----------" "-----------" "----"
+    for entry in "${iperf_servers[@]}"; do
+      local url=$(echo "$entry" | cut -d'|' -f1)
+      local loc=$(echo "$entry" | cut -d'|' -f2)
+      local ports=$(echo "$entry" | cut -d'|' -f3)
+      local send_result recv_result send_val recv_val
+      send_result=$(_iperf_test "$url" "$ports" "" "" "send")
+      recv_result=$(_iperf_test "$url" "$ports" "" "" "recv")
+      send_val=$(echo "$send_result" | awk '{print $1}')
+      recv_val=$(echo "$recv_result" | awk '{print $1}')
+      local ping_val="?"
+      [ "$send_result" != "busy" ] && [ -n "$send_val" ] && ping_val="N/A" || true
+      if [ "$send_result" = "busy" ] && [ "$recv_result" = "busy" ]; then
+        printf "  %-28s | %-15s | %-10s | %-10s | %-7s\n" "$loc" "$url" "busy" "busy" "-"
+      else
+        printf "  %-28s | %-15s | %-10s | %-10s | %-7s\n" "$loc" "$url" "${send_val:-?}" "${recv_val:-?}" "${ping_val}"
+      fi
+    done
+  fi
+
   # Latency test (always)
   echo -e "  ${C_BOLD}Latency test...${C_RESET}"
   local targets=("1.1.1.1" "8.8.8.8" "cloudflare.com")
@@ -1185,6 +1217,33 @@ bench_network() {
   fi
 
   section_end
+}
+
+# ============================================================
+# IPERF3 MULTI-SERVER TEST
+# ============================================================
+
+_iperf_test() {
+  local url=$1 ports=$2 host=$3 flags=$4 dir=$5
+  local result=""
+  local attempt=1
+  while [ $attempt -le 2 ]; do
+    local port
+    port=$(shuf -i "$(echo "$ports" | tr '-' ' ')" -n 1)
+    if [ "$dir" = "send" ]; then
+      result=$(timeout 15 iperf3 "$flags" -c "$url" -p "$port" -P 4 2>/dev/null)
+    else
+      result=$(timeout 15 iperf3 "$flags" -c "$url" -p "$port" -P 4 -R 2>/dev/null)
+    fi
+    if echo "$result" | grep -q "receiver" && ! echo "$result" | grep -q "error"; then
+      local speed=$(echo "$result" | grep SUM | grep receiver | awk '{print $6}')
+      local unit=$(echo "$result" | grep SUM | grep receiver | awk '{print $7}')
+      [ -n "$speed" ] && [ "$speed" != "0.00" ] && echo "$speed $unit" && return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  echo "busy"
 }
 
 # ============================================================
@@ -1451,6 +1510,13 @@ HELPEOF
 main() {
   START_TIME=$(date +%s)
 
+  # Write permission check
+  if ! touch .habs_write_test 2>/dev/null; then
+    echo "No write permission in current directory. Switch to an owned directory." >&2
+    exit 1
+  fi
+  rm -f .habs_write_test
+
   # Pre-parse --no-color and --json for output control
   for arg in "$@"; do
     [ "$arg" = "--no-color" ] && CONFIG_NO_COLOR=true
@@ -1491,6 +1557,8 @@ main() {
 
   if [ "$CONFIG_JSON" = false ]; then
     print_header
+    echo -e "  ${C_DIM}$(date)${C_RESET}"
+    echo ""
   fi
 
   gather_system_info
