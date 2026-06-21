@@ -136,6 +136,15 @@ setup_colors() {
     C_RED=''; C_GREEN=''; C_YELLOW=''
     C_BLUE=''; C_MAGENTA=''; C_CYAN=''; C_WHITE=''
   fi
+
+  # Detect UTF-8 support for box-drawing characters
+  if [ "$CONFIG_NO_COLOR" = true ] || [ "$(locale 2>/dev/null | grep -c 'UTF-8\|utf8')" -eq 0 ]; then
+    C_TL="+"; C_TR="+"; C_BL="+"; C_BR="+"
+    C_H="-"; C_V="|"
+  else
+    C_TL="┌"; C_TR="┐"; C_BL="└"; C_BR="┘"
+    C_H="─"; C_V="│"
+  fi
 }
 
 # ============================================================
@@ -236,17 +245,17 @@ print_header() {
   echo -e "  ${C_CYAN}|_|  |_/_/   \_\____/____(_)${C_RESET}"
   echo ""
   local cols=58
-  printf "  ${C_DIM}%s${C_RESET}\n" "$(printf '%*s' "$cols" | tr ' ' '─')"
+  printf "  ${C_DIM}%s${C_RESET}\n" "$(printf '%*s' "$cols" | tr ' ' "${C_H}")"
   echo ""
 }
 
 section_start() {
   echo ""
-  echo -e "  ${C_BOLD}${C_CYAN}┌─ $1 ─${C_RESET}$(printf '%*s' $((50 - ${#1})) '' | tr ' ' '─')${C_BOLD}${C_CYAN}┐${C_RESET}"
+  echo -e "  ${C_BOLD}${C_CYAN}${C_TL} $1 ${C_H}$(printf '%*s' $((50 - ${#1})) '' | tr ' ' "${C_H}")${C_TR}${C_RESET}"
 }
 
 section_end() {
-  echo -e "  ${C_BOLD}${C_CYAN}└$(printf '%*s' 56 '' | tr ' ' '─')┘${C_RESET}"
+  echo -e "  ${C_BOLD}${C_CYAN}${C_BL}$(printf '%*s' 56 '' | tr ' ' "${C_H}")${C_BR}${C_RESET}"
   echo ""
 }
 
@@ -448,31 +457,35 @@ print_system_info() {
 
 bench_cpu() {
   section_start "CPU Benchmark"
+
+  echo -e "  ${C_YELLOW}Running CPU benchmark. Tests run at reduced priority (nice -n 19).${C_RESET}"
+
   ensure_sysbench || { section_end; return 1; }
 
-  local max_prime=20000
-  [ "$CONFIG_QUICK" = true ] && max_prime=10000
-  [ "$CONFIG_FULL" = true ] && max_prime=50000
+  local cpu_time=6
+  local max_prime=15000
+  [ "$CONFIG_QUICK" = true ] && cpu_time=3 && max_prime=10000
+  [ "$CONFIG_FULL" = true ] && cpu_time=12 && max_prime=30000
 
-  echo -e "  ${C_BOLD}Single-threaded test (max prime=${max_prime})...${C_RESET}"
+  echo -e "  ${C_BOLD}Single-core test (${cpu_time}s)...${C_RESET}"
   local single_out
-  single_out=$(sysbench cpu --cpu-max-prime="$max_prime" --threads=1 run 2>/dev/null)
+  single_out=$(nice -n 19 sysbench cpu --cpu-max-prime="$max_prime" --threads=1 --time="$cpu_time" run 2>/dev/null)
   RESULT_CPU_SINGLE=$(echo "$single_out" | sed -n 's/.*events per second:\s*\([0-9.]*\).*/\1/p')
   [ -z "$RESULT_CPU_SINGLE" ] && RESULT_CPU_SINGLE=0
-  echo -e "  ${C_GREEN}✓${C_RESET} Single:  ${C_BOLD}${RESULT_CPU_SINGLE}${C_RESET} events/s"
+  echo -e "  ${C_GREEN}✓${C_RESET} Single-core:  ${C_BOLD}$(printf "%'.0f" "$RESULT_CPU_SINGLE" 2>/dev/null || echo "$RESULT_CPU_SINGLE")${C_RESET} events/s"
 
-  echo -e "  ${C_BOLD}Multi-threaded test (${SYS_CPU_THREADS} threads, max prime=${max_prime})...${C_RESET}"
+  echo -e "  ${C_BOLD}Multi-core test (${SYS_CPU_THREADS} cores, ${cpu_time}s)...${C_RESET}"
   local multi_out
-  multi_out=$(sysbench cpu --cpu-max-prime="$max_prime" --threads="$SYS_CPU_THREADS" run 2>/dev/null)
+  multi_out=$(nice -n 19 sysbench cpu --cpu-max-prime="$max_prime" --threads="$SYS_CPU_THREADS" --time="$cpu_time" run 2>/dev/null)
   RESULT_CPU_MULTI=$(echo "$multi_out" | sed -n 's/.*events per second:\s*\([0-9.]*\).*/\1/p')
   [ -z "$RESULT_CPU_MULTI" ] && RESULT_CPU_MULTI=0
 
-  echo -e "  ${C_GREEN}✓${C_RESET} Multi:   ${C_BOLD}${RESULT_CPU_MULTI}${C_RESET} events/s"
+  echo -e "  ${C_GREEN}✓${C_RESET} Multi-core:   ${C_BOLD}$(printf "%'.0f" "$RESULT_CPU_MULTI" 2>/dev/null || echo "$RESULT_CPU_MULTI")${C_RESET} events/s"
 
   if [ "$(awk "BEGIN {print ($RESULT_CPU_SINGLE > 0)}")" -eq 1 ]; then
     local ratio
     ratio=$(awk "BEGIN {printf \"%.2f\", $RESULT_CPU_MULTI / $RESULT_CPU_SINGLE}" 2>/dev/null)
-    echo -e "  ${C_DIM}  Scaling: ${ratio}x (ideal: ${SYS_CPU_THREADS}x)${C_RESET}"
+    echo -e "  ${C_DIM}  Scaling:     ${ratio}x (ideal: ${SYS_CPU_THREADS}x)${C_RESET}"
   fi
 
   section_end
@@ -1327,7 +1340,13 @@ main() {
   setup_signals
 
   if [ -n "$CONFIG_OUTPUT" ] && [ "$CONFIG_JSON" = false ]; then
-    exec > >(tee -a "$CONFIG_OUTPUT") 2>&1 || true
+    if command_exists stdbuf; then
+      exec > >(stdbuf -oL tee -a "$CONFIG_OUTPUT") 2>&1 || true
+    else
+      exec > >(tee -a "$CONFIG_OUTPUT") 2>&1 || true
+    fi
+  elif [ "$CONFIG_JSON" = false ] && [ -t 1 ] && command_exists stdbuf; then
+    exec > >(stdbuf -oL cat) || true
   fi
 
   if [ "$CONFIG_JSON" = false ]; then
