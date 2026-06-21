@@ -177,7 +177,7 @@ format_bytes() {
 }
 
 format_duration() {
-  local s=$1 d=0 h=0 m=0
+  local s=${1:-0} d=0 h=0 m=0
   d=$((s / 86400)); s=$((s % 86400))
   h=$((s / 3600));  s=$((s % 3600))
   m=$((s / 60));    s=$((s % 60))
@@ -356,36 +356,40 @@ gather_system_info() {
     SYS_CPU_CORES=$SYS_CPU_THREADS
 
     if command_exists lscpu; then
-      local cores
-      cores=$(lscpu 2>/dev/null | awk -F: '/^CPU\(s\):/ {gsub(/ /,"",$2); print $2}')
-      [ -n "$cores" ] && SYS_CPU_CORES=$cores
+      local lscpu_out
+      lscpu_out=$(lscpu 2>/dev/null) || true
+      if [ -n "$lscpu_out" ]; then
+        local cores
+        cores=$(echo "$lscpu_out" | awk -F: '/^CPU\(s\):/ {gsub(/ /,"",$2); print $2}')
+        [ -n "$cores" ] && SYS_CPU_CORES=$cores
 
-      local freq
-      freq=$(lscpu 2>/dev/null | awk -F: '/MHz/ {gsub(/ /,"",$2); print $2; exit}')
-      if [ -n "$freq" ]; then
-        SYS_CPU_FREQ=$(awk "BEGIN {printf \"%.2f GHz\", $freq/1000}" 2>/dev/null)
-      else
-        local max_freq
-        max_freq=$(lscpu 2>/dev/null | awk -F: '/max MHz/ {gsub(/ /,"",$2); print $2}')
-        [ -n "$max_freq" ] && SYS_CPU_FREQ=$(awk "BEGIN {printf \"%.2f GHz\", $max_freq/1000}" 2>/dev/null)
+        local freq
+        freq=$(echo "$lscpu_out" | awk -F: '/MHz/ {gsub(/ /,"",$2); print $2; exit}')
+        if [ -n "$freq" ]; then
+          SYS_CPU_FREQ=$(awk "BEGIN {printf \"%.2f GHz\", $freq/1000}" 2>/dev/null || echo "")
+        else
+          local max_freq
+          max_freq=$(echo "$lscpu_out" | awk -F: '/max MHz/ {gsub(/ /,"",$2); print $2}')
+          [ -n "$max_freq" ] && SYS_CPU_FREQ=$(awk "BEGIN {printf \"%.2f GHz\", $max_freq/1000}" 2>/dev/null || echo "")
+        fi
+
+        SYS_CPU_CACHE=$(echo "$lscpu_out" | awk -F: '/L[1-3]/ {gsub(/^ */,"",$1); gsub(/^ /,"",$2); printf "%s: %s, ", $1, $2}' | sed 's/, $//') || true
+        SYS_CPU_FLAGS=$(echo "$lscpu_out" | awk -F: '/^[Ff]lags/ {print $2}' | xargs) || true
       fi
-
-      SYS_CPU_CACHE=$(lscpu 2>/dev/null | awk -F: '/L[1-3]/ {gsub(/^ */,"",$1); gsub(/^ /,"",$2); printf "%s: %s, ", $1, $2}' | sed 's/, $//')
-
-      SYS_CPU_FLAGS=$(lscpu 2>/dev/null | awk -F: '/^Flags/ {print $2}' | xargs)
     fi
 
     [ -z "$SYS_CPU_FREQ" ] && SYS_CPU_FREQ=$(awk '/cpu MHz/ {printf "%.2f GHz", $NF/1000; exit}' /proc/cpuinfo 2>/dev/null || echo "N/A")
     [ -z "$SYS_CPU_FREQ" ] && SYS_CPU_FREQ="N/A"
-    [ -z "$SYS_CPU_FLAGS" ] && SYS_CPU_FLAGS=$(grep -m1 'flags' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | xargs || echo "")
+    [ -z "$SYS_CPU_FLAGS" ] && SYS_CPU_FLAGS=$(grep -m1 'flags\|Features' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | xargs || echo "")
   fi
 
   if [ -f /proc/meminfo ]; then
     local mem_total mem_avail swap_total
-    mem_total=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
-    mem_avail=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
-    swap_total=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)
+    mem_total=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo) || true
+    mem_avail=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo) || true
+    swap_total=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo) || true
 
+    : "${mem_total:=0}" "${mem_avail:=0}" "${swap_total:=0}"
     SYS_RAM_TOTAL=$((mem_total * 1024))
     SYS_RAM_AVAIL=$((mem_avail * 1024))
     SYS_RAM_USED=$((SYS_RAM_TOTAL - SYS_RAM_AVAIL))
@@ -393,26 +397,27 @@ gather_system_info() {
   fi
 
   local disk_info
-  disk_info=$(df -h / 2>/dev/null | tail -1)
+  disk_info=$(df -h / 2>/dev/null | tail -1) || true
   if [ -n "$disk_info" ]; then
-    SYS_DISK_TOTAL=$(echo "$disk_info" | awk '{print $2}')
-    SYS_DISK_USED=$(echo "$disk_info" | awk '{print $3}')
-    SYS_DISK_AVAIL=$(echo "$disk_info" | awk '{print $4}')
-    SYS_DISK_PCT=$(echo "$disk_info" | awk '{print $5}')
-    SYS_DISK_MOUNT=$(echo "$disk_info" | awk '{print $6}')
-    SYS_DISK_FSTYPE=$(df -T / 2>/dev/null | tail -1 | awk '{print $2}')
+    SYS_DISK_TOTAL=$(echo "$disk_info" | awk '{print $2}') || true
+    SYS_DISK_USED=$(echo "$disk_info" | awk '{print $3}') || true
+    SYS_DISK_AVAIL=$(echo "$disk_info" | awk '{print $4}') || true
+    SYS_DISK_PCT=$(echo "$disk_info" | awk '{print $5}') || true
+    SYS_DISK_MOUNT=$(echo "$disk_info" | awk '{print $6}') || true
+    SYS_DISK_FSTYPE=$(df -T / 2>/dev/null | tail -1 | awk '{print $2}') || true
   fi
 
   if command_exists systemd-detect-virt; then
     SYS_VIRT=$(systemd-detect-virt 2>/dev/null || echo "none")
   elif command_exists hostnamectl; then
-    SYS_VIRT=$(hostnamectl 2>/dev/null | awk -F: '/Virtualization/ {gsub(/^ /,"",$2); print $2}') || echo "none"
+    SYS_VIRT=$(hostnamectl 2>/dev/null | awk -F: '/Virtualization/ {gsub(/^ /,"",$2); print $2}') || true
+    [ -z "$SYS_VIRT" ] && SYS_VIRT="none"
   else
     SYS_VIRT="none/detect"
   fi
 
   if [ -f /proc/loadavg ]; then
-    SYS_LOAD=$(awk '{print $1 ", " $2 ", " $3}' /proc/loadavg)
+    SYS_LOAD=$(awk '{print $1 ", " $2 ", " $3}' /proc/loadavg) || true
   fi
 
   log_success "System information gathered"
@@ -487,6 +492,14 @@ bench_geekbench() {
   if [ -f "$GB_DIR/geekbench6" ]; then
     log_info "Using cached Geekbench 6 in ${GB_DIR}"
   else
+    echo -e "  ${C_BOLD}Checking internet connectivity...${C_RESET}"
+    if command_exists curl; then
+      curl -sI --max-time 5 "https://cdn.geekbench.com" >/dev/null 2>&1 || {
+        echo -e "  ${C_YELLOW}Cannot reach Geekbench CDN. Skipping.${C_RESET}"
+        section_end
+        return 1
+      }
+    fi
     echo -e "  ${C_BOLD}Downloading Geekbench 6 (~100 MB)...${C_RESET}"
     if ! download_url "$gb_url" "$gb_tar" 120; then
       echo -e "  ${C_RED}Failed to download Geekbench 6. Check internet connection.${C_RESET}"
@@ -1339,18 +1352,34 @@ main() {
   [ "$CONFIG_SKIP_DISK" = false ]    && bench_disk    || log_debug "Skipping disk benchmark"
   [ "$CONFIG_SKIP_NETWORK" = false ] && bench_network || log_debug "Skipping network benchmark"
 
-  # Geekbench 6
-  if [ "$CONFIG_GEEKBENCH" = true ]; then
+  # Geekbench 6 (skipped if --skip-cpu)
+  if [ "$CONFIG_GEEKBENCH" = true ] && [ "$CONFIG_SKIP_CPU" = false ]; then
     bench_geekbench || log_warn "Geekbench 6 failed or was skipped"
     cleanup_geekbench
+  elif [ "$CONFIG_GEEKBENCH" = true ] && [ "$CONFIG_SKIP_CPU" = true ]; then
+    log_debug "Skipping Geekbench 6 (--skip-cpu)"
   fi
 
-  # Advanced benchmarks
-  if [ "$CONFIG_ADVANCED" = true ]; then
+  # Advanced benchmarks (respect --skip-* flags)
+  if [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_CPU" = false ]; then
     bench_advanced_cpu      || log_debug "Advanced CPU skipped/failed"
+  elif [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_CPU" = true ]; then
+    log_debug "Skipping advanced CPU (--skip-cpu)"
+  fi
+  if [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_MEMORY" = false ]; then
     bench_advanced_memory   || log_debug "Advanced memory skipped/failed"
+  elif [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_MEMORY" = true ]; then
+    log_debug "Skipping advanced memory (--skip-memory)"
+  fi
+  if [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_DISK" = false ]; then
     bench_advanced_disk     || log_debug "Advanced disk skipped/failed"
+  elif [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_DISK" = true ]; then
+    log_debug "Skipping advanced disk (--skip-disk)"
+  fi
+  if [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_NETWORK" = false ]; then
     bench_advanced_network  || log_debug "Advanced network skipped/failed"
+  elif [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_NETWORK" = true ]; then
+    log_debug "Skipping advanced network (--skip-network)"
   fi
 
   # Restore stdout for JSON output
