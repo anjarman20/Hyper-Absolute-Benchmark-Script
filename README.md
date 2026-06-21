@@ -55,10 +55,10 @@
 
 ```bash
 # Run directly (one-liner)
-bash <(curl -sSL https://raw.githubusercontent.com/yourusername/habs/main/habs.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/anjarman20/Hyper-Absolute-Benchmark-Script/main/habs.sh)
 
 # Or download and run
-curl -sSL https://raw.githubusercontent.com/yourusername/habs/main/habs.sh -o habs.sh
+curl -sSL https://raw.githubusercontent.com/anjarman20/Hyper-Absolute-Benchmark-Script/main/habs.sh -o habs.sh
 chmod +x habs.sh
 ./habs.sh
 ```
@@ -320,13 +320,13 @@ HABS attempts to auto-install `sysbench` via the system package manager on first
 ### One-liner (recommended)
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/yourusername/habs/main/habs.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/anjarman20/Hyper-Absolute-Benchmark-Script/main/habs.sh)
 ```
 
 ### Manual
 
 ```bash
-git clone https://github.com/yourusername/habs.git
+git clone https://github.com/anjarman20/Hyper-Absolute-Benchmark-Script.git
 cd habs
 chmod +x habs.sh
 ./habs.sh
@@ -335,9 +335,9 @@ chmod +x habs.sh
 ### As a system command
 
 ```bash
-sudo curl -sSL https://raw.githubusercontent.com/yourusername/habs/main/habs.sh -o /usr/local/bin/habs
-sudo chmod +x /usr/local/bin/habs
-habs
+sudo curl -sSL https://raw.githubusercontent.com/anjarman20/Hyper-Absolute-Benchmark-Script/main/habs.sh -o /usr/local/bin/habs.sh
+sudo chmod +x /usr/local/bin/habs.sh
+habs.sh
 ```
 
 ---
