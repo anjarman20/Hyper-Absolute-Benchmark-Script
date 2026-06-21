@@ -247,9 +247,9 @@ download_url() {
 
 print_header() {
   echo ""
-  echo -e "  ${C_CYAN} _   _    _     ____   ____  ${C_RESET}"
-  echo -e "  ${C_CYAN}| | | |  / \   | __ ) / ___| ${C_RESET}  ${C_BOLD}Hyper Absolute Benchmark Script${C_RESET}"
-  echo -e "  ${C_CYAN}| |_| | / _ \  |  _ \ \___ \\ ${C_RESET}  ${C_DIM}Version ${VERSION}${C_RESET}"
+  echo -e "  ${C_CYAN} _   _    _    ____   ____  ${C_RESET}"
+  echo -e "  ${C_CYAN}| | | |  / \  | __ ) / ___| ${C_RESET}  ${C_BOLD}Hyper Absolute Benchmark Script${C_RESET}"
+  echo -e "  ${C_CYAN}| |_| | / _ \ |  _ \ \___ \\ ${C_RESET}  ${C_DIM}Version ${VERSION}${C_RESET}"
   echo -e "  ${C_CYAN}|  _  |/ ___ \\| |_) | ___) |${C_RESET}  ${C_DIM}Modern Linux Benchmark Tool${C_RESET}"
   echo -e "  ${C_CYAN}|_| |_/_/   \\_\\____/|____/ ${C_RESET}"
   echo ""
