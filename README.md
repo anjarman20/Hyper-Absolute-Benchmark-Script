@@ -1,13 +1,13 @@
 # HABS — Hyper Absolute Benchmark Script
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.0.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/platform-linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/bash-4.0%2B-black.svg" alt="Bash">
 </p>
 
-**HABS** is a modern, all-in-one Linux benchmark tool inspired by YABS (Yet Another Benchmark Script). It provides comprehensive system information gathering alongside CPU, memory, disk, and network performance tests — delivering clean, structured output suitable for VPS, dedicated servers, and cloud infrastructure evaluation.
+**HABS** is a modern, all-in-one Linux benchmark tool inspired by YABS (Yet Another Benchmark Script). It provides comprehensive system information gathering alongside **10 benchmark categories** — including **Geekbench 6**, **stress-ng**, **fio**, and **ioping** — all enabled by default. Delivers clean, structured output suitable for VPS, dedicated servers, and cloud infrastructure evaluation.
 
 ---
 
@@ -19,10 +19,12 @@
   - [Options](#options)
   - [Examples](#examples)
 - [Benchmarks](#benchmarks)
-  - [CPU](#cpu)
-  - [Memory](#memory)
-  - [Disk](#disk)
-  - [Network](#network)
+  - [Standard](#standard)
+  - [Geekbench 6](#geekbench-6)
+  - [Advanced CPU](#advanced-cpu)
+  - [Advanced Memory](#advanced-memory)
+  - [Advanced Disk](#advanced-disk)
+  - [Advanced Network](#advanced-network)
 - [Scoring](#scoring)
 - [Output](#output)
   - [Terminal](#terminal)
@@ -38,16 +40,20 @@
 
 ## Features
 
-- **System Information** — OS, kernel, CPU model/cache/frequency, RAM, swap, disk usage, filesystem type, virtualization detection, load averages
-- **CPU Benchmark** — Single-threaded and multi-threaded performance via sysbench with scaling ratio
-- **Memory Benchmark** — Sequential read and write throughput via sysbench
-- **Disk Benchmark** — 1M sequential and 4K random I/O via dd with IOPS calculation; disk-space-aware auto-scaling
-- **Network Benchmark** — Multi-location download speed test via curl, upload via iperf3 (optional), latency via ping
-- **Scoring System** — Weighted 100-point score across CPU, memory, disk, and network with letter grades (A+ through F)
-- **Flexible Output** — Clean terminal UI with box-drawing characters, JSON export for automation, and file output
-- **Quick & Full Modes** — Adjustable test duration and data volume
-- **Portable** — Single Bash script, zero-compile, runs on any modern Linux distribution
-- **Idempotent** — Safe to run multiple times; cleans up temporary files after execution
+- **System Information** — OS, kernel, CPU model/cache/frequency/flags, RAM, swap, disk, filesystem, virtualization, load averages
+- **Geekbench 6** — Single-core & multi-core scores via 25+ real-world workloads (AES, LZMA, JPEG, HTML5, SQLite, PDF, text processing)
+- **CPU Benchmark** — Single & multi-threaded via sysbench with scaling ratio
+- **Advanced CPU** — Matrix ops, FPU, crypto, and cache thrashing via stress-ng
+- **Memory Benchmark** — Sequential 1M read/write via sysbench
+- **Advanced Memory** — Multi-block read (256B/4K/64K/1M) + cache hierarchy
+- **Disk Benchmark** — 1M sequential & 4K random via dd with IOPS & auto-scaling
+- **Advanced Disk** — Random 4K QD=32 mixed via fio + latency via ioping
+- **Network Benchmark** — Multi-CDN download, iperf3 upload, ping latency
+- **Advanced Network** — IPv6 download, packet loss, traceroute
+- **Scoring System** — 100-point weighted score across 5 categories with letter grades (A+ through F)
+- **Flexible Output** — Clean box-drawing terminal UI + full JSON export + file output
+- **Quick & Full Modes** — Adjustable test duration
+- **All benchmarks enabled by default** — No flags needed. Use `--skip-*` to exclude.
 
 ---
 
@@ -63,6 +69,8 @@ chmod +x habs.sh
 ./habs.sh
 ```
 
+> Running `./habs.sh` without any flags executes **all 10 benchmark categories**.
+
 ---
 
 ## Usage
@@ -77,10 +85,10 @@ Usage:  bash habs.sh [options]
 |---------------------|------------------------------------------------|
 | `-h`, `--help`      | Show help message                              |
 | `--version`         | Print version                                  |
-| `--skip-cpu`        | Skip CPU benchmark                             |
-| `--skip-memory`     | Skip memory benchmark                          |
-| `--skip-disk`       | Skip disk benchmark                            |
-| `--skip-network`    | Skip network benchmark                         |
+| `--skip-cpu`        | Skip CPU benchmarks (standard + advanced)      |
+| `--skip-memory`     | Skip memory benchmarks (standard + advanced)   |
+| `--skip-disk`       | Skip disk benchmarks (standard + advanced)     |
+| `--skip-network`    | Skip network benchmarks (standard + advanced)  |
 | `--quick`, `-q`     | Quick mode — shorter tests, less data          |
 | `--full`, `-f`      | Full mode — comprehensive tests, more data     |
 | `--json`            | Output results as JSON to stdout               |
@@ -88,10 +96,13 @@ Usage:  bash habs.sh [options]
 | `--no-color`        | Disable colored terminal output                |
 | `--verbose`, `-v`   | Enable verbose/debug output                    |
 
+> **Geekbench 6** and **Advanced benchmarks** run automatically.  
+> No extra flags needed. Use `--skip-*` to exclude specific categories.
+
 ### Examples
 
 ```bash
-# Full benchmark suite
+# Full benchmark suite (all 10 categories)
 ./habs.sh
 
 # Quick run for a fast overview
@@ -100,11 +111,11 @@ Usage:  bash habs.sh [options]
 # Skip network tests on headless servers
 ./habs.sh --skip-network
 
-# Export results as JSON for monitoring dashboards
-./habs.sh --json --output results.json
+# CPU + memory + Geekbench only
+./habs.sh --skip-disk --skip-network
 
-# Full comprehensive benchmark with verbose logging
-./habs.sh --full --verbose
+# Export results as JSON for dashboards
+./habs.sh --json --output results.json
 
 # Silent JSON generation (suppress terminal output)
 ./habs.sh --skip-cpu --skip-memory --skip-disk --skip-network --json
@@ -114,8 +125,11 @@ Usage:  bash habs.sh [options]
 
 ## Benchmarks
 
-### CPU
+All benchmarks run by default. Use `--skip-*` flags to exclude.
 
+### Standard
+
+#### CPU
 Uses **sysbench** to calculate events per second for prime number computation:
 
 | Mode            | Configuration                        | Duration    |
@@ -124,11 +138,10 @@ Uses **sysbench** to calculate events per second for prime number computation:
 | Default         | 1 thread + N threads, max-prime=20k  | ~30–60s     |
 | Full (`-f`)     | 1 thread + N threads, max-prime=50k  | ~60–120s    |
 
-The **scaling ratio** (multi ÷ single) indicates how well the CPU utilizes multiple cores — ideal scaling equals the number of threads.
+Scaling ratio (multi ÷ single) indicates how well the CPU utilizes multiple cores.
 
-### Memory
-
-Uses **sysbench** to measure sequential read and write throughput in MiB/s with 1M blocks:
+#### Memory
+Sequential read and write throughput in MiB/s via sysbench (1M blocks):
 
 | Mode            | Total Size                            |
 |-----------------|---------------------------------------|
@@ -136,48 +149,106 @@ Uses **sysbench** to measure sequential read and write throughput in MiB/s with 
 | Default         | 10 GB                                 |
 | Full (`-f`)     | 20 GB                                 |
 
-### Disk
+#### Disk
+**dd** with direct I/O, bypassing caching:
 
-Uses **dd** with direct I/O to bypass caching, measuring both throughput and IOPS:
+| Test                  | Block Size | Default Size     |
+|-----------------------|------------|------------------|
+| Sequential Write      | 1 MiB      | 1 GB             |
+| Sequential Read       | 1 MiB      | 1 GB             |
+| 4K Write              | 4 KiB      | ~1 GB            |
+| 4K Read               | 4 KiB      | ~1 GB            |
 
-| Test                  | Block Size | Mode     | File Size        |
-|-----------------------|------------|----------|------------------|
-| Sequential Write      | 1 MiB      | Default  | 1 GB             |
-| Sequential Read       | 1 MiB      | Default  | 1 GB             |
-| 4K Write              | 4 KiB      | Default  | ~1 GB            |
-| 4K Read               | 4 KiB      | Default  | ~1 GB            |
+Auto-scales down when disk space is limited.
 
-When available disk space is limited, HABS automatically scales down test sizes to prevent disk-full errors.
+#### Network
+Downloads from four global CDN locations, reporting the best speed:
 
-### Network
+| Server                          | Provider     |
+|---------------------------------|--------------|
+| `speed.cloudflare.com`          | Cloudflare   |
+| `cachefly.cachefly.net`         | CacheFly     |
+| `proof.ovh.net`                 | OVH          |
+| `speedtest.tele2.net`           | Tele2        |
 
-Downloads from four global CDN locations and reports the best speed:
+- **Upload**: iperf3 to `iperf.he.net` / `iperf.online.net` (optional)
+- **Latency**: ICMP ping to `1.1.1.1`, `8.8.8.8`, `cloudflare.com`
 
-| Server URL                          | Provider         |
-|-------------------------------------|------------------|
-| `speed.cloudflare.com`              | Cloudflare       |
-| `cachefly.cachefly.net`             | CacheFly         |
-| `proof.ovh.net`                     | OVH              |
-| `speedtest.tele2.net`               | Tele2            |
+### Geekbench 6
 
-**Upload** is tested via `iperf3` against public servers (`iperf.he.net`, `iperf.online.net`) when available.
+Downloads the official Geekbench 6 CLI (~100 MB) from `cdn.geekbench.com` and runs the full benchmark suite:
 
-**Latency** is measured via ICMP ping to `1.1.1.1`, `8.8.8.8`, and `cloudflare.com`.
+| Metric          | Description                                    |
+|-----------------|------------------------------------------------|
+| Single-Core     | 25+ real-world workloads (AES, LZMA, JPEG, HTML5, SQLite, PDF, text processing, etc.) |
+| Multi-Core      | Same workloads, all cores simultaneously       |
+
+- Duration: **5–10 minutes**
+- Results are parsed from JSON output and cached
+- Binary is auto-cleaned after completion
+
+### Advanced CPU
+
+Uses **stress-ng** to measure bogo operations per second:
+
+| Test       | Workload                     | Duration (default) |
+|------------|------------------------------|--------------------|
+| Matrix     | Matrix multiplication (256x256) | 20s             |
+| FPU        | Floating-point operations    | 20s               |
+| Crypto     | SHA256 / AES operations      | 20s               |
+| Cache      | Cache thrashing              | 20s               |
+
+### Advanced Memory
+
+Multi-block-size read test via sysbench:
+
+| Block Size | Purpose                        |
+|------------|--------------------------------|
+| 256B       | L1 cache bandwidth             |
+| 4K         | L2/L3 cache bandwidth          |
+| 64K        | Cache-to-RAM bandwidth         |
+| 1M         | Main memory bandwidth          |
+
+Plus cache hierarchy detection via lscpu (L1d, L1i, L2, L3 sizes).
+
+### Advanced Disk
+
+#### fio — Random 4K Mixed
+Queue depth 32, 70/30 read/write mix, direct I/O:
+
+| Metric              | Description                      |
+|---------------------|----------------------------------|
+| Read IOPS           | Random 4K read operations/sec    |
+| Write IOPS          | Random 4K write operations/sec   |
+| Read Latency        | Average read latency (µs)        |
+| Write Latency       | Average write latency (µs)       |
+
+#### ioping — Disk Latency
+Measures actual disk response time in milliseconds.
+
+### Advanced Network
+
+| Test          | Method                                   |
+|---------------|------------------------------------------|
+| IPv6 Download | curl via IPv6 to Cloudflare              |
+| Packet Loss   | 10 × ICMP ping to `1.1.1.1`             |
+| Traceroute    | Hop count to `1.1.1.1` (traceroute/mtr) |
 
 ---
 
 ## Scoring
 
-Scores are calculated on a **100-point scale** with equal weighting across four categories:
+Scores are calculated on a **100-point scale** with five categories:
 
-| Category | Weight | Normalization Baseline |
-|----------|--------|------------------------|
-| CPU      | 25 pts | 100 events/s single-threaded |
-| Memory   | 25 pts | 2000 MiB/s read       |
-| Disk     | 25 pts | 500 MB/s avg (1M r/w) |
-| Network  | 25 pts | 500 Mbps download     |
+| Category      | Weight | Normalization Baseline     |
+|---------------|--------|----------------------------|
+| CPU           | 25 pts | 100 events/s single-thread  |
+| Memory        | 25 pts | 2000 MiB/s read             |
+| Disk          | 25 pts | 500 MB/s avg (1M r/w)       |
+| Network       | 25 pts | 500 Mbps download            |
+| Geekbench 6   | 25 pts | 500 single-core score        |
 
-Each category is capped at 25 points, then summed for the final score.
+Each category is capped at 25 points. Total maximum is 125, normalized to 100.
 
 ### Letter Grades
 
@@ -194,7 +265,7 @@ Each category is capped at 25 points, then summed for the final score.
 | 20–29       | D     |
 | 0–19        | F     |
 
-> **Note:** The scoring is designed for relative comparison. Scores are most meaningful when comparing similar system types (e.g., VPS vs VPS, dedicated vs dedicated).
+> Scoring is designed for relative comparison. Most meaningful when comparing similar system types.
 
 ---
 
@@ -202,22 +273,11 @@ Each category is capped at 25 points, then summed for the final score.
 
 ### Terminal
 
-```text
+```
   ┌─ System Information ────────────────────────────────────┐
    Hostname          : server-01
    OS                : Ubuntu 24.04 LTS (x86_64)
-   Kernel            : 6.8.0-31-generic
-   Uptime            : 42d 3h 15m 22s
-   CPU Model         : AMD EPYC 7763 64-Core Processor
-   CPU Cores         : 4 cores / 4 threads
-   CPU Freq          : 2.45 GHz
-   CPU Cache         : L1d: 256 KiB, L1i: 256 KiB, L2: 4 MiB, L3: 32 MiB
-   RAM               : 15.6 GiB total / 2.1 GiB used
-   Swap              : 2.0 GiB total
-   Disk              : 80G total / 12G used (15%)
-   Filesystem        : ext4 on /
-   Virt              : kvm
-   Load Avg          : 0.15, 0.22, 0.31
+   ...
   └──────────────────────────────────────────────────────────┘
 
   ┌─ CPU Benchmark ─────────────────────────────────────────┐
@@ -226,16 +286,29 @@ Each category is capped at 25 points, then summed for the final score.
    Scaling:  3.70x (ideal: 4x)
   └──────────────────────────────────────────────────────────┘
 
+  ┌─ Geekbench 6 ───────────────────────────────────────────┐
+   Single-Core: 1234
+   Multi-Core:  5678
+  └──────────────────────────────────────────────────────────┘
+
+  ┌─ Advanced CPU (stress-ng) ──────────────────────────────┐
+   Matrix:   1234.56 bogo ops/s
+   FPU:      567.89 bogo ops/s
+   Crypto:   901.23 bogo ops/s
+   Cache:    3456.78 bogo ops/s
+  └──────────────────────────────────────────────────────────┘
+
   ┌─ Results ───────────────────────────────────────────────┐
    CPU Score         : 25/25
    Memory Score      : 20/25
    Disk Score        : 18/25
    Network Score     : 22/25
+   Geekbench Score   : 21/25
 
-   Total Score       : 85/100
-   Grade             : A
+   Total Score       : 88/100
+   Grade             : A-
 
-   Benchmark completed in 3m 42s
+   Benchmark completed in 12m 34s
   └──────────────────────────────────────────────────────────┘
 ```
 
@@ -244,27 +317,10 @@ Each category is capped at 25 points, then summed for the final score.
 ```json
 {
   "tool": "HABS",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "timestamp": "2026-06-21T12:00:00Z",
-  "duration_seconds": 222,
-  "system": {
-    "hostname": "server-01",
-    "os": "Ubuntu 24.04 LTS",
-    "kernel": "6.8.0-31-generic",
-    "architecture": "x86_64",
-    "virtualization": "kvm",
-    "cpu": {
-      "model": "AMD EPYC 7763 64-Core Processor",
-      "cores": 4,
-      "threads": 4,
-      "frequency": "2.45 GHz"
-    },
-    "memory": {
-      "total_bytes": 16768272384,
-      "used_bytes": 2254853632,
-      "available_bytes": 14513418752
-    }
-  },
+  "duration_seconds": 754,
+  "system": { ... },
   "benchmarks": {
     "cpu": {
       "single_events_per_sec": 1234.56,
@@ -284,6 +340,36 @@ Each category is capped at 25 points, then summed for the final score.
       "download_mbps": 456.78,
       "upload_mbps": 123.45,
       "avg_latency_ms": 12.34
+    },
+    "geekbench_6": {
+      "single_core_score": 1234,
+      "multi_core_score": 5678
+    },
+    "advanced": {
+      "cpu": {
+        "matrix_bogo_ops": 1234.56,
+        "fpu_bogo_ops": 567.89,
+        "crypto_bogo_ops": 901.23,
+        "cache_bogo_ops": 3456.78
+      },
+      "memory": {
+        "256b_read_mib_per_sec": 12345,
+        "4k_read_mib_per_sec": 23456,
+        "64k_read_mib_per_sec": 34567,
+        "1m_read_mib_per_sec": 45678
+      },
+      "disk": {
+        "fio_random_4k_read_iops": 45678,
+        "fio_random_4k_write_iops": 12345,
+        "fio_random_4k_read_lat_us": 450,
+        "fio_random_4k_write_lat_us": 680,
+        "ioping_latency_ms": 0.42
+      },
+      "network": {
+        "ipv6_download_mbps": 456.78,
+        "packet_loss_pct": 0,
+        "traceroute_hops": 14
+      }
     }
   },
   "scores": {
@@ -291,9 +377,10 @@ Each category is capped at 25 points, then summed for the final score.
     "memory": 20,
     "disk": 18,
     "network": 22,
-    "total": 85,
+    "geekbench": 21,
+    "total": 88,
     "max": 100,
-    "grade": "A"
+    "grade": "A-"
   }
 }
 ```
@@ -302,16 +389,20 @@ Each category is capped at 25 points, then summed for the final score.
 
 ## Requirements
 
-| Tool       | Required | Used For                     | Installation                         |
-|------------|----------|------------------------------|--------------------------------------|
-| `sysbench` | Yes      | CPU & memory benchmarks      | `apt install sysbench` / `yum install sysbench` |
-| `curl`     | Yes      | Network download tests       | Usually pre-installed                |
-| `dd`       | Yes      | Disk I/O benchmarks          | Part of `coreutils` (pre-installed)  |
-| `ping`     | Yes      | Network latency tests        | Usually pre-installed                |
-| `iperf3`   | Optional | Network upload tests         | `apt install iperf3`                 |
-| `python3`  | Optional | JSON parsing for iperf3      | Usually pre-installed                |
+| Tool       | Required | Used For                              | Auto-Install |
+|------------|----------|---------------------------------------|--------------|
+| `sysbench` | Yes      | CPU, memory, advanced memory          | ✅           |
+| `curl`     | Yes      | Network download, Geekbench download  | ❌ (pre-installed) |
+| `dd`       | Yes      | Disk I/O benchmarks                   | ❌ (coreutils) |
+| `ping`     | Yes      | Network latency, packet loss          | ❌ (pre-installed) |
+| `stress-ng` | Yes    | Advanced CPU (matrix, FPU, crypto, cache) | ✅        |
+| `fio`      | Yes      | Advanced disk (random 4K QD=32)       | ✅           |
+| `ioping`   | No       | Disk latency (advanced disk)          | ❌ (apt/yum) |
+| `iperf3`   | No       | Upload speed test                     | ❌ (apt/yum) |
+| `python3`  | No       | JSON parsing for fio & iperf3         | ❌ (pre-installed) |
+| `traceroute` | No     | Hop count (advanced network)          | ❌ (apt/yum) |
 
-HABS attempts to auto-install `sysbench` via the system package manager on first use.
+HABS auto-installs missing dependencies (`sysbench`, `stress-ng`, `fio`) via the system package manager.
 
 ---
 
@@ -327,7 +418,7 @@ bash <(curl -sSL https://raw.githubusercontent.com/anjarman20/Hyper-Absolute-Ben
 
 ```bash
 git clone https://github.com/anjarman20/Hyper-Absolute-Benchmark-Script.git
-cd habs
+cd Hyper-Absolute-Benchmark-Script
 chmod +x habs.sh
 ./habs.sh
 ```
@@ -344,67 +435,66 @@ habs.sh
 
 ## Comparison with YABS
 
-| Feature                     | YABS                    | HABS                          |
-|-----------------------------|-------------------------|-------------------------------|
-| System Information          | Basic                   | Comprehensive (cache, virt, load, more) |
-| CPU Benchmark               | sysbench (single + multi) | sysbench with scaling ratio   |
-| Memory Benchmark            | ❌ Not included         | ✅ Read & write via sysbench  |
-| Disk Benchmark              | dd (4K + 1M sequential) | dd + IOPS + auto-scaling      |
-| Network Benchmark           | speedtest-cli / iperf3  | Multi-location curl + iperf3   |
-| Scoring                     | Basic numeric           | Weighted 100-pt with letter grades |
-| JSON Output                 | Limited                 | Full structured JSON export   |
+| Feature                     | YABS                    | HABS v2.0                      |
+|-----------------------------|-------------------------|--------------------------------|
+| System Information          | Basic                   | Comprehensive (+ cache, flags) |
+| CPU Benchmark               | sysbench                | sysbench + stress-ng (4 tests) |
+| Memory Benchmark            | ❌ Not included         | sysbench (1M) + multi-block    |
+| Disk Benchmark              | dd (4K + 1M)            | dd + fio (QD=32) + ioping      |
+| Network Benchmark           | speedtest-cli / iperf3  | curl multi-CDN + iperf3 + IPv6 + packet loss + traceroute |
+| Geekbench 6                 | ❌                      | ✅ Auto-download + run         |
+| Scoring                     | Basic numeric           | Weighted 100-pt + letter grades |
+| JSON Output                 | Limited                 | Full structured (all 10 categories) |
 | Quick / Full Modes          | ❌                      | ✅                            |
 | Box-drawing Terminal UI     | ❌                      | ✅                            |
 | File Output                 | ❌                      | ✅ `--output FILE`            |
 | Disk Space Awareness        | ❌                      | ✅ Auto-scaling               |
-| Dependencies                | Heavy (speedtest-cli)   | Minimal (auto-installs sysbench) |
-| Line Count                  | ~500–600                | ~895                          |
+| Auto-Install Dependencies   | ❌                      | ✅ (sysbench, stress-ng, fio) |
+| Line Count                  | ~500–600                | ~1383                         |
 
 ---
 
 ## Troubleshooting
 
-### `sysbench` installation fails
+### Geekbench 6 download fails
 
-On minimal systems, the package manager may not find `sysbench`. Install it manually:
+Ensure `curl` is installed and internet connectivity is available. Geekbench 6 downloads ~100 MB from `cdn.geekbench.com`. Use `--skip-cpu --skip-memory --skip-disk --skip-network` to run Geekbench alone and isolate network issues.
 
+### stress-ng / fio installation fails
+
+On minimal systems, install manually:
 ```bash
 # Debian / Ubuntu
-apt-get update && apt-get install -y sysbench
+apt-get update && apt-get install -y stress-ng fio ioping
 
 # RHEL / CentOS / Fedora
-yum install -y sysbench
-# or
-dnf install -y sysbench
+yum install -y stress-ng fio ioping
 
 # Alpine
-apk add sysbench
-
-# Arch
-pacman -S sysbench
+apk add stress-ng fio ioping
 ```
 
 ### Disk benchmark is slow
 
-WSL2, container environments, and network filesystems exhibit lower I/O performance. The numbers reflect actual host capabilities under virtualization. Run `--full` mode on bare metal for accurate disk measurements.
+WSL2, containers, and network filesystems exhibit lower I/O. The numbers reflect actual host capability under virtualization. Run `--full` on bare metal for accurate measurements.
 
 ### Network test times out
 
-Some VPS providers block ICMP (ping) or certain CDN ranges. Use `--skip-network` or specify `--quick` to reduce test durations.
+Some VPS providers block ICMP or CDN ranges. Use `--skip-network` or `--quick`.
 
 ### JSON output is blank
-
-Ensure you are not mixing `--output FILE` with `--json` when expecting stdout. Without `--output`, `--json` sends the JSON to stdout. Use `2>/dev/null` to suppress diagnostic messages:
 
 ```bash
 ./habs.sh --json 2>/dev/null | jq .
 ```
 
+All diagnostic messages go to stderr; stdout contains only the JSON.
+
 ---
 
 ## Contributing
 
-Contributions are welcome! Please follow these guidelines:
+Contributions welcome! Please follow these guidelines:
 
 1. **Fork** the repository
 2. Create a **feature branch** (`feat/your-feature`)
@@ -414,11 +504,10 @@ Contributions are welcome! Please follow these guidelines:
 
 ### Code Style
 
-- Use `set -euo pipefail` for strict error handling
-- Follow existing naming conventions (`snake_case` for variables, `snake_case` for functions)
-- Avoid external dependencies; prefer POSIX-compatible tools
-- Keep functions focused and well-documented
-- Use `local` for all function-scoped variables
+- `set -euo pipefail` strict error handling
+- `snake_case` for variables and functions
+- `local` for all function-scoped variables
+- Prefer POSIX-compatible tools
 
 ---
 
