@@ -511,7 +511,7 @@ bench_cpu() {
 bench_geekbench() {
   section_start "Geekbench 6"
 
-  local gb_url="https://cdn.geekbench.com/Geekbench-6.3.0-Linux.tar.gz"
+  local gb_url="https://cdn.geekbench.com/Geekbench-6.7.1-Linux.tar.gz"
   local gb_tar="/tmp/geekbench6.tar.gz"
   GB_DIR="/tmp/geekbench6-$$"
 
@@ -685,88 +685,39 @@ bench_advanced_memory() {
 }
 
 # ============================================================
-# ADVANCED DISK (fio + ioping)
+# ADVANCED DISK (ioping only — fio tests in standard disk benchmark)
 # ============================================================
 
 bench_advanced_disk() {
   section_start "Advanced Disk"
 
   local temp_dir="${TMPDIR:-/tmp}"
-  if [ ! -w "$temp_dir" ]; then
-    temp_dir="."
-  fi
+  [ ! -w "$temp_dir" ] && temp_dir="."
 
-  local fio_file="$temp_dir/habs_fio_test.$$"
-  TEMP_FILES+=("$fio_file")
+  # Additional SSD-specific tests using fio
+  if command_exists fio && python3 -c "import json" 2>/dev/null; then
+    local fio_file="$temp_dir/habs_adv_disk.$$"
+    TEMP_FILES+=("$fio_file")
 
-  if ensure_fio; then
-    local fio_size="512m"
-    [ "$CONFIG_QUICK" = true ] && fio_size="256m"
-    [ "$CONFIG_FULL" = true ] && fio_size="1g"
+    echo -e "  ${C_BOLD}Sequential 1M QD=8 (fio)...${C_RESET}"
+    local out_sq8
+    out_sq8=$(_run_fio_test "seq8" "1M" "read" 8 "1G" "" "$fio_file")
+    local bw_sq8=$(_parse_fio_result "$out_sq8" "bw" "read")
+    bw_sq8=$(awk "BEGIN {printf \"%.0f\", $bw_sq8 / 1000}" 2>/dev/null || echo 0)
+    echo -e "  ${C_GREEN}✓${C_RESET} Seq 1M QD=8: ${C_BOLD}${bw_sq8}${C_RESET} MB/s"
 
-    echo -e "  ${C_BOLD}Random 4K mixed (QD=32, 70/30 r/w)...${C_RESET}"
-    local fio_cmd="fio --name=habs_rnd --ioengine=libaio --direct=1 --bs=4k --iodepth=32 --size=${fio_size} --readwrite=randrw --rwmixread=70 --filename=${fio_file} --output-format=json --runtime=20 --time_based"
-    [ "$CONFIG_QUICK" = true ] && fio_cmd="$fio_cmd --runtime=10"
-    [ "$CONFIG_FULL" = true ] && fio_cmd="$fio_cmd --runtime=30"
+    rm -f "$fio_file"
 
-    local fio_out
-    fio_out=$($fio_cmd 2>/dev/null) || true
-
-    if [ -n "$fio_out" ]; then
-      if command_exists python3; then
-        RESULT_ADV_FIO_RND_R_IOPS=$(echo "$fio_out" | python3 -c "
-import sys,json
-try:
-    d=json.load(sys.stdin)
-    j=d.get('jobs',[{}])[0]
-    r=j.get('read',{})
-    w=j.get('write',{})
-    print(r.get('iops',0))
-    print(w.get('iops',0))
-    r_lat=r.get('lat_ns',{}).get('mean',0)
-    w_lat=w.get('lat_ns',{}).get('mean',0)
-    print(r_lat)
-    print(w_lat)
-except:
-    print(0);print(0);print(0);print(0)
-" 2>/dev/null) || true
-        local r_iops w_iops r_lat w_lat
-        IFS=$'\n' read -r r_iops w_iops r_lat w_lat <<< "$fio_out"
-        RESULT_ADV_FIO_RND_R_IOPS=${r_iops:-0}
-        RESULT_ADV_FIO_RND_W_IOPS=${w_iops:-0}
-        RESULT_ADV_FIO_RND_R_LAT=${r_lat:-0}
-        RESULT_ADV_FIO_RND_W_LAT=${w_lat:-0}
-      else
-        RESULT_ADV_FIO_RND_R_IOPS=$(echo "$fio_out" | grep -o '"iops": [0-9.]*' | head -1 | grep -o '[0-9.]*')
-        RESULT_ADV_FIO_RND_W_IOPS=$(echo "$fio_out" | grep -o '"iops": [0-9.]*' | head -2 | tail -1 | grep -o '[0-9.]*')
-        [ -z "$RESULT_ADV_FIO_RND_R_IOPS" ] && RESULT_ADV_FIO_RND_R_IOPS=0
-        [ -z "$RESULT_ADV_FIO_RND_W_IOPS" ] && RESULT_ADV_FIO_RND_W_IOPS=0
+    # Trim/discard test for SSD
+    if [ -d /sys/block ] && command_exists lsblk; then
+      local rot
+      rot=$(lsblk -d -o ROTA 2>/dev/null | tail -1 | xargs)
+      if [ "$rot" = "0" ]; then
+        echo -e "  ${C_DIM}  SSD detected: trim/discard not tested (non-destructive only)${C_RESET}"
       fi
-
-      local r_lat_us=0 w_lat_us=0
-      [ "$RESULT_ADV_FIO_RND_R_LAT" -gt 0 ] && r_lat_us=$(awk "BEGIN {printf \"%.0f\", $RESULT_ADV_FIO_RND_R_LAT/1000}" 2>/dev/null)
-      [ "$RESULT_ADV_FIO_RND_W_LAT" -gt 0 ] && w_lat_us=$(awk "BEGIN {printf \"%.0f\", $RESULT_ADV_FIO_RND_W_LAT/1000}" 2>/dev/null)
-
-      echo -e "  ${C_GREEN}✓${C_RESET} Random 4K QD=32: ${C_BOLD}${RESULT_ADV_FIO_RND_R_IOPS}${C_RESET} IOPS read / ${C_BOLD}${RESULT_ADV_FIO_RND_W_IOPS}${C_RESET} IOPS write"
-      [ "$r_lat_us" -gt 0 ] && echo -e "  ${C_DIM}  Latency: ${r_lat_us}us read / ${w_lat_us}us write${C_RESET}"
-    else
-      echo -e "  ${C_YELLOW}  fio test failed or skipped${C_RESET}"
     fi
   else
-    echo -e "  ${C_YELLOW}  fio not available, skipping random I/O tests${C_RESET}"
-  fi
-
-  # ioping disk latency
-  if command_exists ioping; then
-    echo -e "  ${C_BOLD}Disk latency (ioping)...${C_RESET}"
-    local ioping_out
-    ioping_out=$(ioping -c 5 -D "$temp_dir" 2>&1) || true
-    RESULT_ADV_IOPING_LAT=$(echo "$ioping_out" | grep -oP '[\d.]+(?=\s+ms.*\()' | head -1)
-    [ -z "$RESULT_ADV_IOPING_LAT" ] && RESULT_ADV_IOPING_LAT=$(echo "$ioping_out" | grep 'avg' | grep -oP '[\d.]+(?=\s*ms)' | head -1)
-    [ -z "$RESULT_ADV_IOPING_LAT" ] && RESULT_ADV_IOPING_LAT=0
-    echo -e "  ${C_GREEN}✓${C_RESET} Avg latency: ${C_BOLD}${RESULT_ADV_IOPING_LAT}${C_RESET} ms"
-  else
-    log_info "ioping not available, try: apt-get install ioping"
+    echo -e "  ${C_DIM}  fio+python3 for extra disk tests${C_RESET}"
   fi
 
   section_end
@@ -860,112 +811,246 @@ bench_memory() {
 }
 
 # ============================================================
-# STANDARD DISK BENCHMARK
+# DISK BENCHMARK (fio primary, dd fallback)
 # ============================================================
+
+_run_fio_test() {
+  local name=$1 bs=$2 rw=$3 iodepth=$4 size=$5 extra=$6
+  local fio_file=$7
+  local runtime=15
+  [ "$CONFIG_QUICK" = true ] && runtime=8
+  [ "$CONFIG_FULL" = true ] && runtime=30
+
+  fio --name="$name" --ioengine=libaio --direct=1 --bs="$bs" --iodepth="$iodepth" \
+      --size="$size" --readwrite="$rw" $extra --filename="$fio_file" \
+      --output-format=json --runtime="$runtime" --time_based 2>/dev/null
+}
+
+_parse_fio_result() {
+  local fio_out=$1 field=$2 sub=$3
+  echo "$fio_out" | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    j=d.get('jobs',[{}])[0]
+    r=j.get('$sub',{})
+    print(r.get('$field',0))
+except:
+    print(0)
+" 2>/dev/null || echo 0
+}
 
 bench_disk() {
   section_start "Disk Benchmark"
   local temp_dir="${TMPDIR:-/tmp}"
+  [ ! -w "$temp_dir" ] && temp_dir="."
 
-  if [ ! -w "$temp_dir" ]; then
-    temp_dir="."
+  local fio_file="$temp_dir/habs_disk_test.$$"
+  TEMP_FILES+=("$fio_file")
+
+  local fio_avail=false
+  if command_exists fio; then
+    fio_avail=true
+  else
+    ensure_fio 2>/dev/null && fio_avail=true || true
   fi
 
-  local count_1m=1024
-  local count_4k=256000
-  [ "$CONFIG_QUICK" = true ] && count_1m=512 && count_4k=128000
-  [ "$CONFIG_FULL" = true ] && count_1m=2048 && count_4k=512000
+  if [ "$fio_avail" = true ]; then
+    local test_size="1G"
+    [ "$CONFIG_QUICK" = true ] && test_size="512M"
+    [ "$CONFIG_FULL" = true ] && test_size="2G"
 
-  local avail_kb=0
-  if command_exists df; then
-    avail_kb=$(df -k "$temp_dir" 2>/dev/null | tail -1 | awk '{print $4}')
+    # Sequential 1M write
+    echo -e "  ${C_BOLD}Sequential 1M write (fio)...${C_RESET}"
+    local out_sq_w
+    out_sq_w=$(_run_fio_test "seqwr" "1M" "write" 1 "$test_size" "--fsync=1" "$fio_file")
+    local bw_sq_w
+    bw_sq_w=$(_parse_fio_result "$out_sq_w" "bw" "write")
+    RESULT_DISK_1M_WRITE=$(awk "BEGIN {printf \"%.2f\", $bw_sq_w / 1000}" 2>/dev/null || echo 0)
+    echo -e "  ${C_GREEN}✓${C_RESET} 1M Write: ${C_BOLD}${RESULT_DISK_1M_WRITE}${C_RESET} MB/s"
+
+    # Sequential 1M read
+    echo -e "  ${C_BOLD}Sequential 1M read (fio)...${C_RESET}"
+    is_root && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+    local out_sq_r
+    out_sq_r=$(_run_fio_test "seqrd" "1M" "read" 1 "$test_size" "" "$fio_file")
+    local bw_sq_r
+    bw_sq_r=$(_parse_fio_result "$out_sq_r" "bw" "read")
+    RESULT_DISK_1M_READ=$(awk "BEGIN {printf \"%.2f\", $bw_sq_r / 1000}" 2>/dev/null || echo 0)
+    echo -e "  ${C_GREEN}✓${C_RESET} 1M Read:  ${C_BOLD}${RESULT_DISK_1M_READ}${C_RESET} MB/s"
+
+    rm -f "$fio_file"
+
+    # Random 4K QD=1 read
+    echo -e "  ${C_BOLD}Random 4K read QD=1 (fio)...${C_RESET}"
+    local out_rnd_r
+    out_rnd_r=$(_run_fio_test "rndrd" "4K" "randread" 1 "$test_size" "" "$fio_file")
+    RESULT_DISK_4K_READ=$(_parse_fio_result "$out_rnd_r" "iops" "read")
+    local lat_rnd_r
+    lat_rnd_r=$(_parse_fio_result "$out_rnd_r" "mean" "read" | awk '{printf "%.0f", $1/1000}' 2>/dev/null || echo 0)
+    [ -z "$RESULT_DISK_4K_READ" ] && RESULT_DISK_4K_READ=0
+    echo -e "  ${C_GREEN}✓${C_RESET} 4K Read QD=1: ${C_BOLD}${RESULT_DISK_4K_READ}${C_RESET} IOPS (${lat_rnd_r}us)"
+
+    rm -f "$fio_file"
+
+    # Random 4K mixed QD=32 (70/30 r/w)
+    echo -e "  ${C_BOLD}Random 4K mixed QD=32 (fio)...${C_RESET}"
+    local out_rnd_mix
+    out_rnd_mix=$(_run_fio_test "rndmix" "4K" "randrw" 32 "$test_size" "--rwmixread=70" "$fio_file")
+    local r_iops w_iops r_lat w_lat
+    r_iops=$(_parse_fio_result "$out_rnd_mix" "iops" "read")
+    w_iops=$(_parse_fio_result "$out_rnd_mix" "iops" "write")
+    r_lat=$(_parse_fio_result "$out_rnd_mix" "mean" "read" | awk '{printf "%.0f", $1/1000}' 2>/dev/null || echo 0)
+    w_lat=$(_parse_fio_result "$out_rnd_mix" "mean" "write" | awk '{printf "%.0f", $1/1000}' 2>/dev/null || echo 0)
+    RESULT_ADV_FIO_RND_R_IOPS=${r_iops:-0}
+    RESULT_ADV_FIO_RND_W_IOPS=${w_iops:-0}
+    echo -e "  ${C_GREEN}✓${C_RESET} 4K Mixed QD=32: ${C_BOLD}${RESULT_ADV_FIO_RND_R_IOPS}${C_RESET} rd / ${C_BOLD}${RESULT_ADV_FIO_RND_W_IOPS}${C_RESET} wr IOPS"
+    echo -e "  ${C_DIM}   Latency: ${r_lat}us rd / ${w_lat}us wr${C_RESET}"
+
+    rm -f "$fio_file"
+
+    # Disk latency via fio
+    echo -e "  ${C_BOLD}Disk latency (fio)...${C_RESET}"
+    local out_lat
+    out_lat=$(_run_fio_test "latency" "4K" "randread" 1 "1G" "" "$fio_file" 2>/dev/null)
+    local lat_clat
+    lat_clat=$(echo "$out_lat" | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    j=d.get('jobs',[{}])[0]
+    r=j.get('read',{})
+    lat=r.get('clat_ns',{}).get('percentile',{})
+    p50=lat.get('50.000000',0)
+    p95=lat.get('95.000000',0)
+    p99=lat.get('99.000000',0)
+    print(f'{p50/1000:.0f},{p95/1000:.0f},{p99/1000:.0f}')
+except:
+    print('0,0,0')
+" 2>/dev/null || echo "0,0,0")
+    local p50 p95 p99
+    IFS=',' read -r p50 p95 p99 <<< "$lat_clat"
+    echo -e "  ${C_GREEN}✓${C_RESET} Latency: ${C_BOLD}${p50}us${C_RESET} (p50) / ${p95}us (p95) / ${p99}us (p99)"
+
+  else
+    # Fallback: dd (basic sequential test)
+    local avail_kb=0
+    command_exists df && avail_kb=$(df -k "$temp_dir" 2>/dev/null | tail -1 | awk '{print $4}')
+    local count_1m=1024 count_4k=256000
+    [ "$CONFIG_QUICK" = true ] && count_1m=512 && count_4k=128000
+    [ "$CONFIG_FULL" = true ] && count_1m=2048 && count_4k=512000
+
+    local needed_kb=$((count_1m * 1024 + count_4k * 4))
+    if [ "$avail_kb" -gt 0 ] && [ "$avail_kb" -lt "$needed_kb" ]; then
+      local scale_down=$((avail_kb / needed_kb))
+      [ "$scale_down" -lt 1 ] && scale_down=1
+      count_1m=$((count_1m * scale_down / 2))
+      count_4k=$((count_4k * scale_down / 2))
+      [ "$count_1m" -lt 16 ] && count_1m=16
+      [ "$count_4k" -lt 4096 ] && count_4k=4096
+      log_warn "Disk space limited, reducing test size"
+    fi
+
+    # 1M sequential write
+    echo -e "  ${C_BOLD}1M sequential write (dd fallback)...${C_RESET}"
+    local out_1m_w
+    out_1m_w=$(dd if=/dev/zero of="$fio_file" bs=1M count="$count_1m" oflag=direct 2>&1) || true
+    RESULT_DISK_1M_WRITE=$(echo "$out_1m_w" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
+    [ -z "$RESULT_DISK_1M_WRITE" ] && RESULT_DISK_1M_WRITE=0
+    echo -e "  ${C_GREEN}✓${C_RESET} 1M Write: ${C_BOLD}${RESULT_DISK_1M_WRITE}${C_RESET} MB/s"
+
+    # 1M sequential read
+    echo -e "  ${C_BOLD}1M sequential read (dd fallback)...${C_RESET}"
+    is_root && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+    local out_1m_r
+    out_1m_r=$(dd if="$fio_file" of=/dev/null bs=1M iflag=direct 2>&1) || true
+    RESULT_DISK_1M_READ=$(echo "$out_1m_r" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
+    [ -z "$RESULT_DISK_1M_READ" ] && RESULT_DISK_1M_READ=0
+    echo -e "  ${C_GREEN}✓${C_RESET} 1M Read:  ${C_BOLD}${RESULT_DISK_1M_READ}${C_RESET} MB/s"
+
+    rm -f "$fio_file"
+
+    # 4K sequential (small block) write
+    echo -e "  ${C_BOLD}4K sequential write (dd fallback)...${C_RESET}"
+    local out_4k_w
+    out_4k_w=$(dd if=/dev/zero of="$fio_file" bs=4k count="$count_4k" oflag=direct 2>&1) || true
+    RESULT_DISK_4K_WRITE=$(echo "$out_4k_w" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
+    [ -z "$RESULT_DISK_4K_WRITE" ] && RESULT_DISK_4K_WRITE=0
+    local iops_4k_w=0
+    [ "$(awk "BEGIN {print ($RESULT_DISK_4K_WRITE > 0)}")" -eq 1 ] && \
+      iops_4k_w=$(awk "BEGIN {printf \"%.0f\", $RESULT_DISK_4K_WRITE * 1000000 / 4096}" 2>/dev/null)
+    echo -e "  ${C_GREEN}✓${C_RESET} 4K Write: ${C_BOLD}${RESULT_DISK_4K_WRITE}${C_RESET} MB/s (${iops_4k_w} IOPS)"
+
+    # 4K sequential (small block) read
+    echo -e "  ${C_BOLD}4K sequential read (dd fallback)...${C_RESET}"
+    is_root && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+    local out_4k_r
+    out_4k_r=$(dd if="$fio_file" of=/dev/null bs=4k iflag=direct 2>&1) || true
+    RESULT_DISK_4K_READ=$(echo "$out_4k_r" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
+    [ -z "$RESULT_DISK_4K_READ" ] && RESULT_DISK_4K_READ=0
+    local iops_4k_r=0
+    [ "$(awk "BEGIN {print ($RESULT_DISK_4K_READ > 0)}")" -eq 1 ] && \
+      iops_4k_r=$(awk "BEGIN {printf \"%.0f\", $RESULT_DISK_4K_READ * 1000000 / 4096}" 2>/dev/null)
+    echo -e "  ${C_GREEN}✓${C_RESET} 4K Read:  ${C_BOLD}${RESULT_DISK_4K_READ}${C_RESET} MB/s (${iops_4k_r} IOPS)"
   fi
-  local needed_kb=$((count_1m * 1024 + count_4k * 4))
-  if [ "$avail_kb" -gt 0 ] && [ "$avail_kb" -lt "$needed_kb" ]; then
-    local scale_down=$((avail_kb / needed_kb))
-    [ "$scale_down" -lt 1 ] && scale_down=1
-    count_1m=$((count_1m * scale_down / 2))
-    count_4k=$((count_4k * scale_down / 2))
-    [ "$count_1m" -lt 16 ] && count_1m=16
-    [ "$count_4k" -lt 4096 ] && count_4k=4096
-    log_warn "Disk space limited, reducing test size"
+
+  # ioping disk latency (always try)
+  if command_exists ioping; then
+    echo -e "  ${C_BOLD}Disk latency (ioping)...${C_RESET}"
+    local ioping_out
+    ioping_out=$(ioping -c 5 -D "$temp_dir" 2>&1) || true
+    RESULT_ADV_IOPING_LAT=$(echo "$ioping_out" | grep -oP '[\d.]+(?=\s+ms.*\()' | head -1)
+    [ -z "$RESULT_ADV_IOPING_LAT" ] && RESULT_ADV_IOPING_LAT=$(echo "$ioping_out" | grep 'avg' | grep -oP '[\d.]+(?=\s*ms)' | head -1)
+    [ -z "$RESULT_ADV_IOPING_LAT" ] && RESULT_ADV_IOPING_LAT=0
+    echo -e "  ${C_GREEN}✓${C_RESET} Avg latency: ${C_BOLD}${RESULT_ADV_IOPING_LAT}${C_RESET} ms"
   fi
 
-  local tmpfile
-  tmpfile=$(mktemp -p "$temp_dir" habs_disk.XXXXXX 2>/dev/null || mktemp habs_disk.XXXXXX)
-  TEMP_FILES+=("$tmpfile")
-
-  echo -e "  ${C_BOLD}1M sequential write test (${count_1m} blocks)...${C_RESET}"
-  local out_1m_w
-  out_1m_w=$(dd if=/dev/zero of="$tmpfile" bs=1M count="$count_1m" oflag=direct 2>&1) || true
-  RESULT_DISK_1M_WRITE=$(echo "$out_1m_w" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
-  if [ -z "$RESULT_DISK_1M_WRITE" ]; then
-    local bytes tm
-    bytes=$(echo "$out_1m_w" | grep -o '^[0-9]* bytes' | grep -o '[0-9]*' | head -1)
-    tm=$(echo "$out_1m_w" | grep -o '[0-9.]* seconds' | grep -o '[0-9.]*' | head -1)
-    [ -n "$bytes" ] && [ -n "$tm" ] && [ "$(awk "BEGIN {print ($tm > 0)}")" -eq 1 ] && \
-      RESULT_DISK_1M_WRITE=$(awk "BEGIN {printf \"%.2f\", $bytes / $tm / 1000000}" 2>/dev/null)
-  fi
-  [ -z "$RESULT_DISK_1M_WRITE" ] && RESULT_DISK_1M_WRITE=0
-  echo -e "  ${C_GREEN}✓${C_RESET} 1M Write: ${C_BOLD}${RESULT_DISK_1M_WRITE}${C_RESET} MB/s"
-
-  echo -e "  ${C_BOLD}1M sequential read test...${C_RESET}"
-  is_root && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
-  local out_1m_r
-  out_1m_r=$(dd if="$tmpfile" of=/dev/null bs=1M iflag=direct 2>&1) || true
-  RESULT_DISK_1M_READ=$(echo "$out_1m_r" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
-  if [ -z "$RESULT_DISK_1M_READ" ]; then
-    local bytes tm
-    bytes=$(echo "$out_1m_r" | grep -o '^[0-9]* bytes' | grep -o '[0-9]*' | head -1)
-    tm=$(echo "$out_1m_r" | grep -o '[0-9.]* seconds' | grep -o '[0-9.]*' | head -1)
-    [ -n "$bytes" ] && [ -n "$tm" ] && [ "$(awk "BEGIN {print ($tm > 0)}")" -eq 1 ] && \
-      RESULT_DISK_1M_READ=$(awk "BEGIN {printf \"%.2f\", $bytes / $tm / 1000000}" 2>/dev/null)
-  fi
-  [ -z "$RESULT_DISK_1M_READ" ] && RESULT_DISK_1M_READ=0
-  echo -e "  ${C_GREEN}✓${C_RESET} 1M Read:  ${C_BOLD}${RESULT_DISK_1M_READ}${C_RESET} MB/s"
-
-  rm -f "$tmpfile"
-  tmpfile=$(mktemp -p "$temp_dir" habs_disk.XXXXXX 2>/dev/null || mktemp habs_disk.XXXXXX)
-  TEMP_FILES+=("$tmpfile")
-
-  echo -e "  ${C_BOLD}4K write test (${count_4k} blocks)...${C_RESET}"
-  local out_4k_w
-  out_4k_w=$(dd if=/dev/zero of="$tmpfile" bs=4k count="$count_4k" oflag=direct 2>&1) || true
-  RESULT_DISK_4K_WRITE=$(echo "$out_4k_w" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
-  if [ -z "$RESULT_DISK_4K_WRITE" ]; then
-    local bytes tm
-    bytes=$(echo "$out_4k_w" | grep -o '^[0-9]* bytes' | grep -o '[0-9]*' | head -1)
-    tm=$(echo "$out_4k_w" | grep -o '[0-9.]* seconds' | grep -o '[0-9.]*' | head -1)
-    [ -n "$bytes" ] && [ -n "$tm" ] && [ "$(awk "BEGIN {print ($tm > 0)}")" -eq 1 ] && \
-      RESULT_DISK_4K_WRITE=$(awk "BEGIN {printf \"%.2f\", $bytes / $tm / 1000000}" 2>/dev/null)
-  fi
-  [ -z "$RESULT_DISK_4K_WRITE" ] && RESULT_DISK_4K_WRITE=0
-
-  local iops_4k_w=0
-  [ "$(awk "BEGIN {print ($RESULT_DISK_4K_WRITE > 0)}")" -eq 1 ] && \
-    iops_4k_w=$(awk "BEGIN {printf \"%.0f\", $RESULT_DISK_4K_WRITE * 1000000 / 4096}" 2>/dev/null)
-  echo -e "  ${C_GREEN}✓${C_RESET} 4K Write: ${C_BOLD}${RESULT_DISK_4K_WRITE}${C_RESET} MB/s (${iops_4k_w} IOPS)"
-
-  echo -e "  ${C_BOLD}4K read test...${C_RESET}"
-  is_root && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
-  local out_4k_r
-  out_4k_r=$(dd if="$tmpfile" of=/dev/null bs=4k iflag=direct 2>&1) || true
-  RESULT_DISK_4K_READ=$(echo "$out_4k_r" | sed -n 's/.*, \([0-9.]*\) [MG]B\/s.*/\1/p')
-  if [ -z "$RESULT_DISK_4K_READ" ]; then
-    local bytes tm
-    bytes=$(echo "$out_4k_r" | grep -o '^[0-9]* bytes' | grep -o '[0-9]*' | head -1)
-    tm=$(echo "$out_4k_r" | grep -o '[0-9.]* seconds' | grep -o '[0-9.]*' | head -1)
-    [ -n "$bytes" ] && [ -n "$tm" ] && [ "$(awk "BEGIN {print ($tm > 0)}")" -eq 1 ] && \
-      RESULT_DISK_4K_READ=$(awk "BEGIN {printf \"%.2f\", $bytes / $tm / 1000000}" 2>/dev/null)
-  fi
-  [ -z "$RESULT_DISK_4K_READ" ] && RESULT_DISK_4K_READ=0
-
-  local iops_4k_r=0
-  [ "$(awk "BEGIN {print ($RESULT_DISK_4K_READ > 0)}")" -eq 1 ] && \
-    iops_4k_r=$(awk "BEGIN {printf \"%.0f\", $RESULT_DISK_4K_READ * 1000000 / 4096}" 2>/dev/null)
-  echo -e "  ${C_GREEN}✓${C_RESET} 4K Read:  ${C_BOLD}${RESULT_DISK_4K_READ}${C_RESET} MB/s (${iops_4k_r} IOPS)"
-
+  rm -f "$fio_file" 2>/dev/null || true
   section_end
+}
+
+# ============================================================
+# INSTALL SPEEDTEST CLI (Ookla)
+# ============================================================
+
+_SPEEDTEST_CHECKED=false
+_SPEEDTEST_AVAILABLE=false
+
+ensure_speedtest() {
+  if [ "$_SPEEDTEST_CHECKED" = true ]; then
+    [ "$_SPEEDTEST_AVAILABLE" = true ] && return 0 || return 1
+  fi
+  _SPEEDTEST_CHECKED=true
+  if command_exists speedtest; then
+    _SPEEDTEST_AVAILABLE=true
+    return 0
+  fi
+  log_info "Installing Ookla Speedtest CLI..."
+  if command_exists apt-get; then
+    apt-get install -y speedtest-cli &>/dev/null && { log_success "speedtest-cli installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
+  elif command_exists yum; then
+    yum install -y speedtest-cli &>/dev/null && { log_success "speedtest-cli installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
+  elif command_exists apk; then
+    apk add speedtest-cli &>/dev/null && { log_success "speedtest-cli installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
+  elif command_exists pacman; then
+    pacman -S --noconfirm speedtest-cli &>/dev/null && { log_success "speedtest-cli installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
+  elif command_exists zypper; then
+    zypper install -y speedtest-cli &>/dev/null && { log_success "speedtest-cli installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
+  fi
+  # Try direct download as fallback
+  local st_url="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-$(uname -m).tgz"
+  local st_tar="/tmp/speedtest-cli.tgz"
+  local st_dir="/tmp/speedtest-cli"
+  if command_exists curl; then
+    curl -sL --max-time 30 -o "$st_tar" "$st_url" 2>/dev/null && \
+    mkdir -p "$st_dir" && \
+    tar -xzf "$st_tar" -C "$st_dir" 2>/dev/null && \
+    cp "$st_dir/speedtest" /usr/local/bin/ 2>/dev/null && \
+    chmod +x /usr/local/bin/speedtest 2>/dev/null && \
+    { log_success "speedtest CLI installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
+  fi
+  log_warn "Ookla Speedtest CLI not available. Using curl fallback."
+  return 1
 }
 
 # ============================================================
@@ -975,73 +1060,111 @@ bench_disk() {
 bench_network() {
   section_start "Network Benchmark"
 
-  if ! command_exists curl; then
-    echo -e "  ${C_YELLOW}curl not found. Skipping network benchmark.${C_RESET}"
-    section_end
-    return 1
-  fi
+  local has_speedtest=false
+  ensure_speedtest 2>/dev/null && has_speedtest=true || true
 
-  local urls=(
-    "https://speed.cloudflare.com/__down?bytes=100000000"
-    "https://cachefly.cachefly.net/100mb.test"
-    "https://proof.ovh.net/files/100Mb.dat"
-    "https://speedtest.tele2.net/100MB.zip"
-  )
+  if [ "$has_speedtest" = true ]; then
+    local st_timeout=30
+    [ "$CONFIG_QUICK" = true ] && st_timeout=15
+    [ "$CONFIG_FULL" = true ] && st_timeout=60
 
-  local timeout=15
-  [ "$CONFIG_QUICK" = true ] && timeout=8
-  [ "$CONFIG_FULL" = true ] && timeout=30
-
-  local best_speed=0 best_server=""
-
-  echo -e "  ${C_BOLD}Download speed test...${C_RESET}"
-  for url in "${urls[@]}"; do
-    local server
-    server=$(echo "$url" | awk -F/ '{print $3}')
-
-    echo -ne "  ${C_DIM}  ${server}...${C_RESET} " >&2
-
-    local speed_bps
-    speed_bps=$(curl -sL --max-time "$timeout" -o /dev/null -w "%{speed_download}" "$url" 2>/dev/null) || true
-
-    if [ -n "$speed_bps" ] && [ "$(awk "BEGIN {print ($speed_bps > 0)}")" -eq 1 ]; then
-      local speed_mbps
-      speed_mbps=$(awk "BEGIN {printf \"%.2f\", $speed_bps * 8 / 1000000}" 2>/dev/null)
-      echo -e "${C_GREEN}${speed_mbps}${C_RESET} Mbps" >&2
-      if [ "$(awk "BEGIN {print ($speed_mbps > $best_speed)}")" -eq 1 ]; then
-        best_speed=$speed_mbps
-        best_server=$server
-      fi
-    else
-      echo -e "${C_YELLOW}timeout/error${C_RESET}" >&2
+    # Ookla Speedtest: nearest server
+    echo -e "  ${C_BOLD}Ookla Speedtest (nearest server)...${C_RESET}"
+    local st_out
+    st_out=$(speedtest --accept-license --accept-gdpr -f json 2>/dev/null) || true
+    if [ -n "$st_out" ] && command_exists python3; then
+      local st_dl st_ul st_lat
+      st_dl=$(echo "$st_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('download',{}).get('bandwidth',0)*8/1000000)" 2>/dev/null || echo 0)
+      st_ul=$(echo "$st_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('upload',{}).get('bandwidth',0)*8/1000000)" 2>/dev/null || echo 0)
+      st_lat=$(echo "$st_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ping',{}).get('latency',0))" 2>/dev/null || echo 0)
+      local st_server=$(echo "$st_out" | python3 -c "import sys,json; d=json.load(sys.stdin); s=d.get('server',{}); print(f\"{s.get('name','?')} ({s.get('location','?')})\")" 2>/dev/null || echo "?")
+      RESULT_NET_DOWNLOAD=$(awk "BEGIN {printf \"%.2f\", $st_dl}" 2>/dev/null || echo 0)
+      RESULT_NET_UPLOAD=$(awk "BEGIN {printf \"%.2f\", $st_ul}" 2>/dev/null || echo 0)
+      echo -e "  ${C_GREEN}✓${C_RESET} Download: ${C_BOLD}${RESULT_NET_DOWNLOAD}${C_RESET} Mbps"
+      echo -e "  ${C_GREEN}✓${C_RESET} Upload:   ${C_BOLD}${RESULT_NET_UPLOAD}${C_RESET} Mbps"
+      echo -e "  ${C_DIM}   Server: ${st_server}, ping: ${st_lat}ms${C_RESET}"
     fi
-  done
 
-  RESULT_NET_DOWNLOAD=$best_speed
-  echo -e "  ${C_GREEN}✓${C_RESET} Download: ${C_BOLD}${RESULT_NET_DOWNLOAD}${C_RESET} Mbps (best: ${best_server})"
-
-  RESULT_NET_UPLOAD=0
-  if command_exists iperf3; then
-    echo -e "  ${C_BOLD}Upload test (iperf3)...${C_RESET}"
-    local iperf_servers=("iperf.he.net" "iperf.online.net")
-    for server in "${iperf_servers[@]}"; do
-      local uplink
-      uplink=$(iperf3 -c "$server" -t 5 -J 2>/dev/null) || true
-      if [ -n "$uplink" ]; then
-        local up_mbps
-        up_mbps=$(echo "$uplink" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('end',{}).get('sum_sent',{}).get('bits_per_second',0)/1000000)" 2>/dev/null || echo "")
-        if [ -n "$up_mbps" ] && [ "$(awk "BEGIN {print ($up_mbps > 0)}")" -eq 1 ]; then
-          RESULT_NET_UPLOAD=$up_mbps
-          echo -e "  ${C_GREEN}✓${C_RESET} Upload:   ${C_BOLD}${RESULT_NET_UPLOAD}${C_RESET} Mbps (${server})"
-          break
-        fi
+    # Multi-country speedtest
+    echo -e "  ${C_BOLD}Multi-location speedtest...${C_RESET}"
+    local countries=("Singapore" "United States" "Germany")
+    local country_labels=("Singapore" "US" "Germany")
+    for i in "${!countries[@]}"; do
+      local ctry="${countries[$i]}"
+      local label="${country_labels[$i]}"
+      echo -ne "  ${C_DIM}  ${label}...${C_RESET} " >&2
+      local st_ctry
+      st_ctry=$(speedtest --accept-license --accept-gdpr -f json -s "$(speedtest --list 2>/dev/null | grep -im1 "$ctry" | awk '{print $1}' | head -1)" 2>/dev/null) || true
+      if [ -n "$st_ctry" ]; then
+        local st_dl_ctry=$(echo "$st_ctry" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('download',{}).get('bandwidth',0)*8/1000000)" 2>/dev/null || echo 0)
+        echo -e "${C_GREEN}${st_dl_ctry}${C_RESET} Mbps" >&2
+      else
+        echo -e "${C_YELLOW}skip${C_RESET}" >&2
       fi
     done
-    if [ "$(awk "BEGIN {print ($RESULT_NET_UPLOAD == 0)}")" -eq 1 ]; then
-      echo -e "  ${C_YELLOW}  iperf3 servers unreachable, upload skipped${C_RESET}"
+  else
+    # Fallback: curl multi-CDN download
+    if ! command_exists curl; then
+      echo -e "  ${C_YELLOW}curl not found. Skipping network benchmark.${C_RESET}"
+      section_end
+      return 1
+    fi
+
+    local urls=(
+      "https://speed.cloudflare.com/__down?bytes=100000000"
+      "https://cachefly.cachefly.net/100mb.test"
+      "https://proof.ovh.net/files/100Mb.dat"
+    )
+    local timeout=15
+    [ "$CONFIG_QUICK" = true ] && timeout=8
+    [ "$CONFIG_FULL" = true ] && timeout=30
+    local best_speed=0 best_server=""
+
+    echo -e "  ${C_BOLD}Download speed test (curl fallback)...${C_RESET}"
+    for url in "${urls[@]}"; do
+      local server=$(echo "$url" | awk -F/ '{print $3}')
+      echo -ne "  ${C_DIM}  ${server}...${C_RESET} " >&2
+      local speed_bps
+      speed_bps=$(curl -sL --max-time "$timeout" -o /dev/null -w "%{speed_download}" "$url" 2>/dev/null) || true
+      if [ -n "$speed_bps" ] && [ "$(awk "BEGIN {print ($speed_bps > 0)}")" -eq 1 ]; then
+        local speed_mbps=$(awk "BEGIN {printf \"%.2f\", $speed_bps * 8 / 1000000}" 2>/dev/null)
+        echo -e "${C_GREEN}${speed_mbps}${C_RESET} Mbps" >&2
+        if [ "$(awk "BEGIN {print ($speed_mbps > $best_speed)}")" -eq 1 ]; then
+          best_speed=$speed_mbps
+          best_server=$server
+        fi
+      else
+        echo -e "${C_YELLOW}timeout/error${C_RESET}" >&2
+      fi
+    done
+    RESULT_NET_DOWNLOAD=$best_speed
+    echo -e "  ${C_GREEN}✓${C_RESET} Download: ${C_BOLD}${RESULT_NET_DOWNLOAD}${C_RESET} Mbps (best: ${best_server})"
+
+    # Upload via iperf3 (curl fallback only)
+    RESULT_NET_UPLOAD=0
+    if command_exists iperf3; then
+      echo -e "  ${C_BOLD}Upload test (iperf3)...${C_RESET}"
+      local iperf_servers=("iperf.he.net" "iperf.online.net")
+      for server in "${iperf_servers[@]}"; do
+        local uplink
+        uplink=$(iperf3 -c "$server" -t 5 -J 2>/dev/null) || true
+        if [ -n "$uplink" ]; then
+          local up_mbps
+          up_mbps=$(echo "$uplink" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('end',{}).get('sum_sent',{}).get('bits_per_second',0)/1000000)" 2>/dev/null || echo "")
+          if [ -n "$up_mbps" ] && [ "$(awk "BEGIN {print ($up_mbps > 0)}")" -eq 1 ]; then
+            RESULT_NET_UPLOAD=$up_mbps
+            echo -e "  ${C_GREEN}✓${C_RESET} Upload:   ${C_BOLD}${RESULT_NET_UPLOAD}${C_RESET} Mbps (${server})"
+            break
+          fi
+        fi
+      done
+      if [ "$(awk "BEGIN {print ($RESULT_NET_UPLOAD == 0)}")" -eq 1 ]; then
+        echo -e "  ${C_YELLOW}  iperf3 servers unreachable${C_RESET}"
+      fi
     fi
   fi
 
+  # Latency test (always)
   echo -e "  ${C_BOLD}Latency test...${C_RESET}"
   local targets=("1.1.1.1" "8.8.8.8" "cloudflare.com")
   local total_lat=0 lat_count=0
@@ -1056,7 +1179,6 @@ bench_network() {
       printf "  ${C_DIM}  %-18s ${C_RESET} %s\n" "${target}:" "${C_YELLOW}timeout${C_RESET}"
     fi
   done
-
   if [ "$lat_count" -gt 0 ]; then
     RESULT_NET_LATENCY=$(awk "BEGIN {printf \"%.2f\", $total_lat / $lat_count}" 2>/dev/null)
     echo -e "  ${C_GREEN}✓${C_RESET} Avg latency: ${C_BOLD}${RESULT_NET_LATENCY}${C_RESET} ms"
@@ -1329,6 +1451,12 @@ HELPEOF
 main() {
   START_TIME=$(date +%s)
 
+  # Pre-parse --no-color and --json for output control
+  for arg in "$@"; do
+    [ "$arg" = "--no-color" ] && CONFIG_NO_COLOR=true
+  done
+  setup_colors
+
   while [ $# -gt 0 ]; do
     case "$1" in
       -h|--help)       print_help; exit 0 ;;
@@ -1349,7 +1477,6 @@ main() {
     shift
   done
 
-  setup_colors
   setup_signals
 
   if [ -n "$CONFIG_OUTPUT" ] && [ "$CONFIG_JSON" = false ]; then
