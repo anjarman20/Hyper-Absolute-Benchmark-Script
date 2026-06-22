@@ -530,6 +530,29 @@ gather_system_info() {
     features=$(echo "$features" | xargs)
     [[ -z "$features" ]] && features='N/A'
     HABS_SYSINFO[cpu_features_str]="$features"
+
+    # ASN / ISP lookup
+    HABS_SYSINFO[asn]=''
+    local ip4="${HABS_SYSINFO[ipv4]}"
+    if [[ -n "$ip4" && "$ip4" != '127.0.0.1' && "$ip4" != '::1' ]]; then
+        local asn_out
+        asn_out=$(run_with_timeout 5 curl -sS https://ipinfo.io/json 2>/dev/null || true)
+        if [[ -n "$asn_out" ]]; then
+            HABS_SYSINFO[asn]=$(echo "$asn_out" | python3 -c "
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    org=d.get('org','')
+    # Extract ASN number from 'AS13335 Cloudflare, Inc.' -> '13335 Cloudflare'
+    parts=org.split(' ',1)
+    if len(parts)>1 and parts[0].startswith('AS'):
+        print(parts[0][2:], parts[1].rstrip(','))
+    else:
+        print(org)
+except: print('')
+" 2>/dev/null || echo '')
+        fi
+    fi
 }
 
 display_system_info() {
@@ -542,7 +565,7 @@ display_system_info() {
     _print_kv 'Cache'            "L1:${HABS_SYSINFO[cpu_cache_l1d]:-N/A} L2:${HABS_SYSINFO[cpu_cache_l2]:-N/A} L3:${HABS_SYSINFO[cpu_cache_l3]:-N/A} | ${HABS_SYSINFO[cpu_features_str]}"
     _print_kv 'RAM'              "$(fmt_bytes ${HABS_SYSINFO[ram_used]}) / $(fmt_bytes ${HABS_SYSINFO[ram_total]}) ($(fmt_bytes ${HABS_SYSINFO[ram_available]}) avail)"
     _print_kv 'Disk'             "$(fmt_bytes ${HABS_SYSINFO[disk_used]}) / $(fmt_bytes ${HABS_SYSINFO[disk_total]}) (${HABS_SYSINFO[disk_usage_pct]}%) — ${HABS_SYSINFO[filesystem]}"
-    _print_kv 'Net'              "IPv4:${HABS_SYSINFO[ipv4]:-N/A} IPv6:${HABS_SYSINFO[ipv6]:-N/A} (${HABS_SYSINFO[interfaces]:-N/A})"
+    _print_kv 'Net'              "IPv4:${HABS_SYSINFO[ipv4]:-N/A} IPv6:${HABS_SYSINFO[ipv6]:-N/A}${HABS_SYSINFO[asn]:+ | AS${HABS_SYSINFO[asn]}}"
     _print_kv 'Load'             "${HABS_SYSINFO[load_1]:-0.00} / ${HABS_SYSINFO[load_5]:-0.00} / ${HABS_SYSINFO[load_15]:-0.00} | Virt:${HABS_SYSINFO[virtualization]} Uptime:$(fmt_duration ${HABS_SYSINFO[uptime_seconds]})"
 
     _print_section_footer
@@ -621,11 +644,18 @@ bench_cpu() {
 _parse_sysbench_mbs() {
     local out=$1
     local val
+    # pattern 1: "12345.67 MiB/sec"
     val=$(echo "$out" | grep -oP '[\d.]+(?=\s*MiB/sec)' | head -1 || echo '')
+    # pattern 2: "transferred (12345.67"
     [[ -z "$val" || "$val" == '0' ]] && val=$(echo "$out" | grep -oP 'transferred\s*\(\K[\d.]+' | head -1 || echo '')
-    [[ -z "$val" || "$val" == '0' ]] && val=$(echo "$out" | grep -oP 'MiB/sec\s*\|\s*\K[\d.]+' | head -1 || echo '')
-    [[ -z "$val" || "$val" == '0' ]] && val=$(echo "$out" | grep -oP '\K[\d.]+(?=\s*MiB/sec)' | tail -1 || echo '')
-    [[ -z "$val" || "$val" == '0' ]] && val=$(echo "$out" | grep -i 'transferred' | grep -oP '\(*\K[0-9]+\.[0-9]+' | head -1 || echo '')
+    # pattern 3: "12345.67 MiB/s" (single slash)
+    [[ -z "$val" || "$val" == '0' ]] && val=$(echo "$out" | grep -oP '[\d.]+(?=\s*MiB/s)' | head -1 || echo '')
+    # pattern 4: "| 12345.67 |" table format
+    [[ -z "$val" || "$val" == '0' ]] && val=$(echo "$out" | grep -oP '[\d.]+(?=\s*MiBps)' | head -1 || echo '')
+    # pattern 5: last number before MiB/sec
+    [[ -z "$val" || "$val" == '0' ]] && val=$(echo "$out" | grep -oP '[\d.]+(?=\s*MiB/sec)' | tail -1 || echo '')
+    # pattern 6: any number in parentheses at end of transferred line
+    [[ -z "$val" || "$val" == '0' ]] && val=$(echo "$out" | grep -i transferred | grep -oP '\(*\K[0-9]+\.[0-9]+' | head -1 || echo '')
     echo "${val:-0}"
 }
 
@@ -1169,37 +1199,53 @@ bench_geekbench6() {
     fi
     _ok "Extracted Geekbench 6"
 
-    # Run
+    # Run with JSON export
     _print_empty
     _print_line "${C_DIM}Geekbench 6 typically takes 5–10 minutes to complete.${C_RESET}"
     _print_line "${C_DIM}Results are uploaded to the Geekbench Browser automatically.${C_RESET}"
     _print_empty
 
+    local gb_json_out="${HABS_TMPDIR}/geekbench_results.json"
+
     _spinner_start "Running Geekbench 6 (this may take a while) ..."
     local gb_out
-    gb_out=$(run_with_timeout 900 "$HABS_GEK_BIN" 2>&1 || true)
+    gb_out=$(run_with_timeout 900 "$HABS_GEK_BIN" --export-json "$gb_json_out" 2>&1 || true)
     _spinner_stop
 
     local single_score=0 multi_score=0 gb_url_result=''
 
-    # Parse scores from text output
-    single_score=$(echo "$gb_out" | grep -oP 'Single-Core Score:\s*\K[0-9]+' | head -1 || echo '0')
-    multi_score=$(echo "$gb_out" | grep -oP 'Multi-Core Score:\s*\K[0-9]+' | head -1 || echo '0')
-    gb_url_result=$(echo "$gb_out" | grep -oP 'https://browser\.geekbench\.com[^\s]*' | head -1 || echo '')
-
-    # If text parsing failed, try JSON file
-    if [[ $single_score -eq 0 ]] && [[ $multi_score -eq 0 ]]; then
-        local gb_json
-        gb_json=$(find "$HOME/.Geekbench6" -maxdepth 2 -name '*.json' 2>/dev/null | head -1)
-        if [[ -n "$gb_json" ]] && [[ -f "$gb_json" ]]; then
-            local js_data
-            js_data=$(cat "$gb_json")
-            single_score=$(echo "$js_data" | grep -oP '"single_score"\s*:\s*\K[0-9]+' | head -1 || echo '0')
-            multi_score=$(echo "$js_data" | grep -oP '"multi_score"\s*:\s*\K[0-9]+' | head -1 || echo '0')
-            [[ $single_score -eq 0 ]] && single_score=$(echo "$js_data" | grep -oP '"score"\s*:\s*\K[0-9]+' | head -1 || echo '0')
-            [[ $multi_score -eq 0 ]] && multi_score=$(echo "$js_data" | grep -oP '"score"\s*:\s*\K[0-9]+' | tail -1 || echo '0')
-        fi
+    # Parse scores from JSON export first
+    if [[ -f "$gb_json_out" ]] && [[ -s "$gb_json_out" ]] && check_command python3; then
+        local scores
+        scores=$(python3 -c "
+import json
+try:
+    with open('$gb_json_out') as f:
+        d = json.load(f)
+    s = d.get('single_score', 0)
+    m = d.get('multi_score', 0)
+    if not s:
+        s = d.get('scores', {}).get('single', {}).get('score', 0)
+    if not m:
+        m = d.get('scores', {}).get('multi', {}).get('score', 0)
+    print(int(s))
+    print(int(m))
+except:
+    print('0'); print('0')
+" 2>/dev/null) || scores='0 0'
+        single_score=$(echo "$scores" | sed -n '1p')
+        multi_score=$(echo "$scores" | sed -n '2p')
     fi
+
+    # Fallback: parse text output
+    if [[ $single_score -eq 0 ]] && [[ $multi_score -eq 0 ]]; then
+        single_score=$(echo "$gb_out" | grep -oP 'Single-Core Score:\s*\K[0-9]+' | head -1 || echo '0')
+        multi_score=$(echo "$gb_out" | grep -oP 'Multi-Core Score:\s*\K[0-9]+' | head -1 || echo '0')
+        gb_url_result=$(echo "$gb_out" | grep -oP 'https://browser\.geekbench\.com[^\s]*' | head -1 || echo '')
+    fi
+
+    # Cleanup
+    rm -f "$gb_json_out" 2>/dev/null || true
 
     if [[ $single_score -eq 0 ]] && [[ $multi_score -eq 0 ]]; then
         _fail "Failed to parse Geekbench 6 results"
@@ -1404,7 +1450,8 @@ build_json() {
     json+=$'    "network": {\n'
     json+="$(json_kv 'ipv4'               "${HABS_SYSINFO[ipv4]:-null}" true)"$'\n'
     json+="$(json_kv 'ipv6'               "${HABS_SYSINFO[ipv6]:-null}" true)"$'\n'
-    json+="$(json_kv 'interfaces'         "${HABS_SYSINFO[interfaces]:-null}" false)"$'\n'
+    json+="$(json_kv 'interfaces'         "${HABS_SYSINFO[interfaces]:-null}" true)"$'\n'
+    json+="$(json_kv 'asn'                "${HABS_SYSINFO[asn]:-null}" false)"$'\n'
     json+=$'    },\n'
     json+=$'    "load": {\n'
     json+="$(json_kv 'load_1'             "${HABS_SYSINFO[load_1]:-0}" true)"$'\n'
