@@ -209,33 +209,20 @@ auto_install() {
     local pkg=$1
     local pm
     pm=$(detect_package_manager)
-    if [[ -z $pm ]]; then
-        _warn "No package manager found. Please install '${pkg}' manually."
+    if [[ -z $pm ]] || [[ $EUID -ne 0 ]]; then
         return 1
     fi
-
-    if [[ $EUID -ne 0 ]]; then
-        _warn "Not running as root. Please install '${pkg}' manually (${pm})."
-        return 1
-    fi
-
-    _info "Installing '${pkg}' via ${pm}..."
 
     case $pm in
-        apt-get) apt-get update -qq && apt-get install -y -qq "$pkg" ;;
-        dnf)     dnf install -y -q "$pkg" ;;
-        yum)     yum install -y -q "$pkg" ;;
-        zypper)  zypper install -y "$pkg" ;;
-        pacman)  pacman -S --noconfirm "$pkg" ;;
-        apk)     apk add --no-cache "$pkg" ;;
-    esac 2>/dev/null
+        apt-get) apt-get update -qq 2>/dev/null && apt-get install -y -qq "$pkg" 2>/dev/null ;;
+        dnf)     dnf install -y -q "$pkg" 2>/dev/null ;;
+        yum)     yum install -y -q "$pkg" 2>/dev/null ;;
+        zypper)  zypper install -y --quiet "$pkg" 2>/dev/null ;;
+        pacman)  pacman -S --noconfirm --quiet "$pkg" 2>/dev/null ;;
+        apk)     apk add --no-cache --quiet "$pkg" 2>/dev/null ;;
+    esac
 
-    if ! check_command "$pkg"; then
-        _error "Failed to install '${pkg}'. Please install manually."
-        return 1
-    fi
-    _ok "Installed '${pkg}'"
-    return 0
+    check_command "$pkg" && return 0 || return 1
 }
 
 ensure_command() {
