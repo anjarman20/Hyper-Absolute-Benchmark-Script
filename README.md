@@ -391,25 +391,25 @@ habs
 
 ## Comparison with YABS
 
-| Feature                     | YABS                    | HABS v2.0                      |
-|-----------------------------|-------------------------|--------------------------------|
-| System Information          | Basic                   | Comprehensive (+ cache, flags, virtualization, load) |
-| CPU Benchmark               | sysbench                | sysbench + stress-ng (4 tests) |
-| Memory Benchmark            | ❌ Not included         | sysbench (1M) + multi-block    |
-| Disk Benchmark              | dd (4K + 1M)            | dd + fio (QD=32, engine auto-detect) + ioping |
-| Network Benchmark           | speedtest-cli / iperf3  | curl multi-CDN + iperf3 + IPv6 + packet loss + traceroute |
-| Geekbench 6                 | ❌                      | ✅ Auto-download + run         |
-| y-cruncher Pi               | ❌                      | ✅ 500M–5000M digit calculation |
-| UnixBench                   | ❌                      | ✅ Compile from source + combined index |
-| Scoring                     | Basic numeric           | Weighted 100-pt + letter grades |
-| JSON Output                 | Limited                 | Full structured (all 12 categories) |
-| Quick / Full Modes          | ❌                      | ✅                            |
-| Box-drawing Terminal UI     | ❌                      | ✅                            |
-| File Output                 | ❌                      | ✅ `--output FILE`            |
-| Disk Space Awareness        | ❌                      | ✅ Auto-scaling               |
-| Auto-Install Dependencies   | ❌                      | ✅ (6 tools across apt/dnf/yum/zypper/pacman/apk) |
-| Architecture Support        | x86_64                  | x86_64 + ARM64 (aarch64)       |
-| Line Count                  | ~500–600                | ~2080                          |
+| Feature                     | HABS v2.0                      |
+|-----------------------------|--------------------------------|
+| System Information          | Comprehensive (+ cache, flags, virtualization, load) |
+| CPU Benchmark               | sysbench + stress-ng (4 tests) |
+| Memory Benchmark            | sysbench (1M) + multi-block    |
+| Disk Benchmark              | dd + fio (QD=32, engine auto-detect) + ioping |
+| Network Benchmark           | curl multi-CDN + iperf3 + IPv6 + packet loss + traceroute |
+| Geekbench 6                 | ✅                             |
+| y-cruncher Pi               | ✅ 500M–5000M digit calculation |
+| UnixBench                   | ✅ Compile from source + combined index |
+| Scoring                     | Weighted 100-pt + letter grades |
+| JSON Output                 | Full structured (all 12 categories) |
+| Quick / Full Modes          | ✅                            |
+| Box-drawing Terminal UI     | ✅                            |
+| File Output                 | ✅ `--output FILE`            |
+| Disk Space Awareness        | ✅ Auto-scaling               |
+| Auto-Install Dependencies   | ✅                            |
+| Architecture Support        | ✅ x86_64 + ARM64 (aarch64)       |
+| Line Count                  | ✅ ~2080                          |
 
 ---
 
