@@ -553,13 +553,13 @@ display_system_info() {
 
     _print_empty
     _print_subheader "Memory"
-    _print_kv 'RAM'              "$(fmt_bytes ${HABS_SYSINFO[ram_total]}) total / $(fmt_bytes ${HABS_SYSINFO[ram_used]}) used ($(fmt_bytes ${HABS_SYSINFO[ram_available]}) avail)"
-    _print_kv 'Swap'             "$(fmt_bytes ${HABS_SYSINFO[swap_total]}) total / $(fmt_bytes ${HABS_SYSINFO[swap_used]}) used"
+    _print_kv 'RAM'              "$(fmt_bytes ${HABS_SYSINFO[ram_used]}) / $(fmt_bytes ${HABS_SYSINFO[ram_total]}) ($(fmt_bytes ${HABS_SYSINFO[ram_available]}) avail)"
+    _print_kv 'Swap'             "$(fmt_bytes ${HABS_SYSINFO[swap_used]}) / $(fmt_bytes ${HABS_SYSINFO[swap_total]})"
 
     _print_empty
     _print_subheader "Storage"
     _print_kv 'Root Mount'       "${HABS_SYSINFO[filesystem]} (${HABS_SYSINFO[mount_options]})"
-    _print_kv 'Usage'            "$(fmt_bytes ${HABS_SYSINFO[disk_total]}) total / $(fmt_bytes ${HABS_SYSINFO[disk_used]}) used (${HABS_SYSINFO[disk_usage_pct]}%)"
+    _print_kv 'Usage'            "$(fmt_bytes ${HABS_SYSINFO[disk_used]}) / $(fmt_bytes ${HABS_SYSINFO[disk_total]}) (${HABS_SYSINFO[disk_usage_pct]}%)"
 
     _print_empty
     _print_subheader "Network"
@@ -1975,6 +1975,32 @@ parse_args() {
     fi
 }
 
+_install_deps() {
+    local install_list=()
+    [[ $HABS_SKIP_CPU -eq 0 ]]          && install_list+=(sysbench)
+    [[ $HABS_SKIP_MEMORY -eq 0 ]]        && install_list+=(sysbench)
+    [[ $HABS_SKIP_DISK -eq 0 ]]          && install_list+=(fio ioping)
+    [[ $HABS_SKIP_NETWORK -eq 0 ]]       && install_list+=(iperf3)
+    [[ $HABS_SKIP_ADVANCED -eq 0 ]]      && install_list+=(stress-ng traceroute)
+    [[ $HABS_SKIP_GEEKBENCH -eq 0 ]]     && true
+    [[ $HABS_SKIP_YCRUNCHER -eq 0 ]]     && true
+    [[ $HABS_SKIP_UNIXBENCH -eq 0 ]]     && true
+
+    local -A seen=()
+    for pkg in "${install_list[@]}"; do
+        [[ -n "${seen[$pkg]:-}" ]] && continue
+        seen[$pkg]=1
+        if ! check_command "$pkg"; then
+            echo -ne "  ${C_YELLOW}⟳${C_RESET} Installing ${pkg} ... "
+            if auto_install "$pkg" &>/dev/null; then
+                echo -e "${C_GREEN}done${C_RESET}"
+            else
+                echo -e "${C_YELLOW}skipped${C_RESET} (run as root to auto-install)"
+            fi
+        fi
+    done
+}
+
 main() {
     HABS_START_TIME=$(date +%s)
 
@@ -1991,6 +2017,14 @@ main() {
 
     local show_output=0
     [[ $json_silent -eq 0 ]] && show_output=1
+
+    # Pre-flight: install all needed dependencies
+    if [[ $show_output -eq 1 ]]; then
+        echo ""
+        echo -e "  ${C_BOLD}${C_CYAN}──${C_RESET}  ${C_BOLD}HABS${C_RESET} — checking dependencies ..."
+        _install_deps
+        command -v clear &>/dev/null && clear 2>/dev/null || printf '\033[2J\033[H'
+    fi
 
     gather_system_info
 
