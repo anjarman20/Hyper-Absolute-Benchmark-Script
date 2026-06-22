@@ -25,10 +25,6 @@ if [[ ${BASH_VERSINFO[0]} -lt 4 ]]; then
     exit 1
 fi
 
-# Geometry
-readonly BOX_HW='─' BOX_VW='│' BOX_TR='┐' BOX_TL='┌' BOX_BR='┘' BOX_BL='└'
-readonly BOX_TM='┬' BOX_BM='┴' BOX_LM='├' BOX_RM='┤' BOX_CR='┼'
-
 # -------- Color Definitions --------------------------------------------------
 C_RESET='' C_BOLD='' C_DIM='' C_RED='' C_GREEN='' C_YELLOW=''
 C_BLUE='' C_MAGENTA='' C_CYAN='' C_WHITE='' C_ORANGE='' C_GREY=''
@@ -53,6 +49,90 @@ _init_colors() {
         C_ORANGE=$(tput setaf 208 2>/dev/null || true)
         C_GREY=$(tput setaf 244 2>/dev/null || true)
     fi
+}
+
+# -------- Output Constants ---------------------------------------------------
+readonly Y_SEP='#'
+readonly Y_HW='━'
+readonly Y_DW='─'
+
+_make_hline() {
+    local len=$1
+    local ch=${2:-$Y_HW}
+    local i
+    for ((i=0; i<len; i++)); do
+        echo -n "$ch"
+    done
+}
+
+_get_inner_width() {
+    local tw
+    tw=$(get_term_width)
+    echo $(( tw - 4 ))
+}
+
+_print_section_header() {
+    [[ $HABS_COMPACT -eq 1 ]] && return
+    local title=$1
+    local tw
+    tw=$(get_term_width)
+    local inner=$(( tw - 6 ))
+    local title_len=${#title}
+    local dash_len=$(( inner - title_len - 4 ))
+    [[ $dash_len -lt 1 ]] && dash_len=1
+    local dash
+    dash=$(_make_hline "$dash_len" "$Y_DW")
+    echo ""
+    printf "  ${C_BOLD}${C_CYAN}%s ${C_WHITE}%s${C_RESET} ${C_CYAN}${dash}${C_RESET}\n" "${Y_SEP}${Y_SEP}" "$title"
+}
+
+_print_section_footer() {
+    [[ $HABS_COMPACT -eq 1 ]] && return
+    local tw
+    tw=$(get_term_width)
+    local inner=$(( tw - 6 ))
+    local dash
+    dash=$(_make_hline "$inner" "$Y_DW")
+    printf "  ${C_CYAN}%s${C_RESET} ${C_DIM}${dash}${C_RESET}\n" "${Y_SEP}${Y_SEP}"
+}
+
+_print_kv() {
+    [[ $HABS_COMPACT -eq 1 ]] && return
+    local key=$1 val=$2 color=${3:-$C_WHITE}
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}  %-18s ${C_GREY}:${C_RESET} ${color}%s${C_RESET}\n" "$Y_SEP" "$key" "$val"
+}
+
+_print_kv_b() {
+    [[ $HABS_COMPACT -eq 1 ]] && return
+    local key=$1 val=$2
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}  ${C_BOLD}%-18s${C_RESET} ${C_GREY}:${C_RESET} ${C_BOLD}${C_GREEN}%s${C_RESET}\n" "$Y_SEP" "$key" "$val"
+}
+
+_print_line() {
+    [[ $HABS_COMPACT -eq 1 ]] && return
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}  %s\n" "$Y_SEP" "$1"
+}
+
+_print_empty() {
+    [[ $HABS_COMPACT -eq 1 ]] && return
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}\n" "$Y_SEP"
+}
+
+_print_subheader() {
+    [[ $HABS_COMPACT -eq 1 ]] && return
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}  ${C_BOLD}${C_MAGENTA}%s${C_RESET}\n" "$Y_SEP" "$1"
+}
+
+_print_info_box() {
+    local msg=$1
+    local tw
+    tw=$(get_term_width)
+    local inner=$(( tw - 6 ))
+    local dash
+    dash=$(_make_hline "$inner" "$Y_DW")
+    printf "  ${C_YELLOW}%s${C_RESET} ${C_DIM}${dash}${C_RESET}\n" "${Y_SEP}${Y_SEP}"
+    printf "  ${C_YELLOW}%s${C_RESET}  %s\n" "$Y_SEP" "$msg"
+    printf "  ${C_YELLOW}%s${C_RESET} ${C_DIM}${dash}${C_RESET}\n" "${Y_SEP}${Y_SEP}"
 }
 
 # -------- Global State -------------------------------------------------------
@@ -310,9 +390,10 @@ _spinner_fail() {
 
 _make_hline() {
     local len=$1
+    local ch=${2:-$Y_HW}
     local i
     for ((i=0; i<len; i++)); do
-        echo -n "${BOX_HW}"
+        echo -n "$ch"
     done
 }
 
@@ -321,76 +402,73 @@ _print_section_header() {
     local title=$1
     local tw
     tw=$(get_term_width)
-    local inner=$(( tw - 4 ))
+    local inner=$(( tw - 6 ))
     local title_len=${#title}
-    local dash_len=$(( inner - title_len - 2 ))
+    local dash_len=$(( inner - title_len - 4 ))
     [[ $dash_len -lt 1 ]] && dash_len=1
-
-    printf "  ${C_BOLD}${C_CYAN}%s${C_RESET}" "${BOX_TL}"
-    printf "${BOX_HW} ${C_BOLD}${C_WHITE}%s${C_RESET} ${C_CYAN}" "$title"
-    _make_hline "$dash_len"
-    printf "${C_BOLD}${C_CYAN}%s${C_RESET}\n" "${BOX_TR}"
+    local dash
+    dash=$(_make_hline "$dash_len" "$Y_DW")
+    echo ""
+    printf "  ${C_BOLD}${C_CYAN}%s ${C_WHITE}%s${C_RESET} ${C_CYAN}${dash}${C_RESET}\n" "${Y_SEP}${Y_SEP}" "$title"
 }
 
 _print_section_footer() {
     [[ $HABS_COMPACT -eq 1 ]] && return
     local tw
     tw=$(get_term_width)
-    local inner=$(( tw - 4 ))
-    printf "  ${C_CYAN}%s${C_RESET}" "${BOX_BL}"
-    _make_hline "$inner"
-    printf "${C_CYAN}%s${C_RESET}\n" "${BOX_BR}"
+    local inner=$(( tw - 6 ))
+    local dash
+    dash=$(_make_hline "$inner" "$Y_DW")
+    printf "  ${C_CYAN}%s${C_RESET} ${C_DIM}${dash}${C_RESET}\n" "${Y_SEP}${Y_SEP}"
 }
 
 _print_kv() {
     [[ $HABS_COMPACT -eq 1 ]] && return
     local key=$1 val=$2 color=${3:-$C_WHITE}
-    printf "  ${C_BOLD}${C_GREY}│${C_RESET}  %-22s ${C_GREY}:${C_RESET} ${color}%s${C_RESET}\n" "$key" "$val"
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}  %-18s ${C_GREY}:${C_RESET} ${color}%s${C_RESET}\n" "$Y_SEP" "$key" "$val"
 }
 
 _print_kv_r() {
     local key=$1 val=$2 color=${3:-$C_WHITE}
-    printf "  ${C_BOLD}${C_GREY}│${C_RESET}  %-22s ${C_GREY}:${C_RESET} ${color}%s${C_RESET}\n" "$key" "$val"
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}  %-18s ${C_GREY}:${C_RESET} ${color}%s${C_RESET}\n" "$Y_SEP" "$key" "$val"
 }
 
 _print_kv_b() {
     [[ $HABS_COMPACT -eq 1 ]] && return
     local key=$1 val=$2
-    printf "  ${C_BOLD}${C_GREY}│${C_RESET}  ${C_BOLD}%-22s${C_RESET} ${C_GREY}:${C_RESET} ${C_BOLD}${C_GREEN}%s${C_RESET}\n" "$key" "$val"
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}  ${C_BOLD}%-18s${C_RESET} ${C_GREY}:${C_RESET} ${C_BOLD}${C_GREEN}%s${C_RESET}\n" "$Y_SEP" "$key" "$val"
 }
 
 _print_compact_kv() {
     local key=$1 val=$2
-    printf "  ${C_BOLD}${C_GREY}│${C_RESET}  ${C_BOLD}%-22s${C_RESET} ${C_GREY}:${C_RESET} ${C_WHITE}%s${C_RESET}\n" "$key" "$val"
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}  ${C_BOLD}%-18s${C_RESET} ${C_GREY}:${C_RESET} ${C_WHITE}%s${C_RESET}\n" "$Y_SEP" "$key" "$val"
 }
 
 _print_line() {
     [[ $HABS_COMPACT -eq 1 ]] && return
-    printf "  ${C_BOLD}${C_GREY}│${C_RESET}  %s\n" "$1"
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}  %s\n" "$Y_SEP" "$1"
 }
 
 _print_subheader() {
     [[ $HABS_COMPACT -eq 1 ]] && return
-    printf "  ${C_BOLD}${C_GREY}│${C_RESET}  ${C_BOLD}${C_MAGENTA}%s${C_RESET}\n" "$1"
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}  ${C_BOLD}${C_MAGENTA}%s${C_RESET}\n" "$Y_SEP" "$1"
 }
 
 _print_empty() {
     [[ $HABS_COMPACT -eq 1 ]] && return
-    printf "  ${C_BOLD}${C_GREY}│${C_RESET}\n"
+    printf "  ${C_BOLD}${C_GREY}%s${C_RESET}\n" "$Y_SEP"
 }
 
 _print_info_box() {
     local msg=$1
     local tw
     tw=$(get_term_width)
-    local inner=$(( tw - 8 ))
-    printf "  ${C_YELLOW}%s${C_RESET}" "${BOX_TL}"
-    _make_hline "$inner"
-    printf "${C_YELLOW}%s${C_RESET}\n" "${BOX_TR}"
-    printf "  ${C_YELLOW}│${C_RESET}  ${C_YELLOW}%s${C_RESET}\n" "$msg"
-    printf "  ${C_YELLOW}%s${C_RESET}" "${BOX_BL}"
-    _make_hline "$inner"
-    printf "${C_YELLOW}%s${C_RESET}\n" "${BOX_BR}"
+    local inner=$(( tw - 6 ))
+    local dash
+    dash=$(_make_hline "$inner" "$Y_DW")
+    printf "  ${C_YELLOW}%s${C_RESET} ${C_DIM}${dash}${C_RESET}\n" "${Y_SEP}${Y_SEP}"
+    printf "  ${C_YELLOW}%s${C_RESET}  %s\n" "$Y_SEP" "$msg"
+    printf "  ${C_YELLOW}%s${C_RESET} ${C_DIM}${dash}${C_RESET}\n" "${Y_SEP}${Y_SEP}"
 }
 
 # =============================================================================
@@ -1631,30 +1709,13 @@ output_json() {
 print_banner() {
     local tw
     tw=$(get_term_width)
-    local banner_width=60
-    [[ $tw -lt 66 ]] && banner_width=$((tw - 6))
-    local padding=$(( (tw - banner_width) / 2 - 2 ))
-    [[ $padding -lt 0 ]] && padding=0
-
-    local pad_str
-    pad_str=$(printf '%*s' "$padding" '')
-
+    local inner=$(( tw - 6 ))
+    local line
+    line=$(_make_hline "$inner" "$Y_DW")
     echo ""
-    printf "%s${C_BOLD}${C_CYAN} ╔════════════════════════════════════════════════════════╗${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║                                                                ║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}██╗  ██╗ █████╗ ██████╗ ███████╗${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}██║  ██║██╔══██╗██╔══██╗██╔════╝${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}███████║███████║██████╔╝███████╗${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}██╔══██║██╔══██║██╔══██╗╚════██║${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}██║  ██║██║  ██║██████╔╝███████║${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║                                                                ║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_GREY}Hyper Absolute Benchmark Script${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_GREY}Version ${HABS_VERSION}${C_RESET}                                        ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_GREY}github.com/anjarman20/Hyper-Absolute-Benchmark-Script${C_RESET}  ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║                                                                ║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ╚════════════════════════════════════════════════════════╝${C_RESET}\n" "$pad_str"
-    echo ""
+    printf "  ${C_BOLD}${C_CYAN}%s${C_RESET} ${C_BOLD}${C_WHITE}%s${C_RESET} ${C_CYAN}${line}${C_RESET}\n" "${Y_SEP}${Y_SEP}${Y_SEP}${Y_SEP}${Y_SEP}" "HABS - Hyper Absolute Benchmark Script"
+    printf "  ${C_BOLD}${C_CYAN}%s${C_RESET} ${C_GREY}%-*s${C_RESET} ${C_CYAN}${line}${C_RESET}\n" "$Y_SEP" "$inner" "github.com/anjarman20/Hyper-Absolute-Benchmark-Script  v${HABS_VERSION}"
+    printf "  ${C_BOLD}${C_CYAN}%s${C_RESET} ${C_DIM}${line}${C_RESET}\n" "${Y_SEP}${Y_SEP}${Y_SEP}${Y_SEP}${Y_SEP}"
 }
 
 print_config_banner() {
