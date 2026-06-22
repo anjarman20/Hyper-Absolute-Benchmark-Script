@@ -182,36 +182,28 @@ Downloads the official Geekbench 6 CLI (~100 MB) from `cdn.geekbench.com` and ru
 
 ### Advanced Benchmarks
 
-#### Advanced CPU (stress-ng)
+#### Advanced CPU (sysbench threaded + OpenSSL crypto)
 
-Uses **stress-ng** to measure bogo operations per second:
-
-| Test       | Workload                     | Duration (default) |
-|------------|------------------------------|--------------------|
-| Matrix     | Matrix multiplication (256×256) | 20s             |
-| FPU        | Floating-point operations    | 20s               |
-| Crypto     | SHA256 / AES operations      | 20s               |
-| Cache      | Cache thrashing              | 20s               |
+Multi-threaded sysbench at 1t, 2t, 4t (if available), and Nt levels, plus OpenSSL AES-256-GCM and SHA-256 throughput.
 
 #### Advanced Memory (sysbench multi-block)
 
 Multi-block-size read test via sysbench:
-
-| Block Size | Purpose                        |
-|------------|--------------------------------|
-| 256B       | L1 cache bandwidth             |
-| 4K         | L2/L3 cache bandwidth          |
-| 64K        | Cache-to-RAM bandwidth         |
-| 1M         | Main memory bandwidth          |
+- **256B** — L1 cache bandwidth
+- **4K** — L2/L3 cache bandwidth  
+- **64K** — RAM bandwidth
 
 #### Advanced Disk (fio + ioping)
 
-**fio** — Random 4K Mixed, queue depth 32, 70/30 read/write mix, direct I/O:
+**fio** — Random 4K Mixed, QD=32, 70/30 R/W mix, engine auto-detect (io_uring → libaio → psync):
 
-| Metric              | Description                      |
-|---------------------|----------------------------------|
-| Read IOPS           | Random 4K read operations/sec    |
-| Write IOPS          | Random 4K write operations/sec   |
+| Metric       | Description                      |
+|-------------|----------------------------------|
+| Read IOPS   | Random 4K read operations/sec    |
+| Write IOPS  | Random 4K write operations/sec   |
+| Latency     | Average read/write latency (µs)  |
+
+**ioping** — Measures actual disk response time in milliseconds.
 | Read Latency        | Average read latency (µs)        |
 | Write Latency       | Average write latency (µs)       |
 
@@ -227,26 +219,10 @@ Ioengine auto-detected: `io_uring` → `libaio` → `psync`
 | Packet Loss   | 10 × ICMP ping to `1.1.1.1`             |
 | Traceroute    | Hop count to `1.1.1.1` (traceroute/mtr)  |
 
-### y-cruncher
-
-Pi calculation benchmark for CPU stability and performance:
-
-| Config     | Digits     | Duration     |
-|-----------|-----------|--------------|
-| Quick      | 500M     | ~30–60s      |
-| Standard   | 1000M    | ~1–3m        |
-| Full        | 5000M    | ~5–20m       |
-
-- Binary auto-downloaded per architecture (x86_64 / ARM64)
-- Cleaned up after completion
-
 ### UnixBench (byte-unixbench)
 
-Combined system index score from the classic UnixBench suite:
-
-- Tests: Dhrystone, Whetstone, Execl, Pipe, Context Switching, Shell Scripts, System Call
-- Compiles from source (requires gcc, make, perl)
-- Reports single **System Benchmarks Index Score**
+*Disabled by default. Enable with `--enable-unixbench`. Requires gcc, make, perl.*
+Compiles from source and reports single **System Benchmarks Index Score**.
 
 ---
 
@@ -287,33 +263,40 @@ Each category is capped at 25 points. Total maximum is 125, normalized to 100.
 
 ### Terminal
 
-Beautiful box-drawing terminal UI with color-coded sections:
+Compact YABS-style output with only essential results:
 
 ```
   ┌─ System Information ────────────────────────────────────┐
    Hostname          : server-01
    OS                : Ubuntu 24.04 LTS (x86_64)
    Kernel            : 6.8.0-42-generic
-   Architecture      : x86_64
-   Virtualization    : kvm
    ...
   └──────────────────────────────────────────────────────────┘
 
   ┌─ CPU Benchmark ─────────────────────────────────────────┐
    Single:   1234.56 events/s
    Multi:    4567.89 events/s
-   Scaling:  3.70x (ideal: 4x)
+   Scaling:  3.70x
   └──────────────────────────────────────────────────────────┘
 
-  ┌─ Results ───────────────────────────────────────────────┐
-   CPU Score         : 21.3/25
-   Memory Score      : 18.7/25
-   Disk Score        : 15.2/25
-   Network Score     : 22.1/25
-   Geekbench Score   : 24.5/25
+  ┌─ Disk Benchmark ────────────────────────────────────────┐
+   1M Seq       : 870 MB/s W / 1234 MB/s R
+   4K Rand      : 32256 W IOPS / 42496 R IOPS
+  └──────────────────────────────────────────────────────────┘
 
-   Total Score       : 82/100
-   Grade             : A-
+  ┌─ Network Benchmark ─────────────────────────────────────┐
+   Download : 860.26 Mbps (Cloudflare)
+   Upload   : 242.71 Mbps (iperf.he.net)
+   Latency  : 1.10 ms
+  └──────────────────────────────────────────────────────────┘
+
+  ┌─ Overview ──────────────────────────────────────────────┐
+   CPU            : 25.0/25
+   Memory         : 18.7/25
+   Disk           : 15.2/25
+   Network        : 22.1/25
+   Geekbench      : 24.5/25
+   Total          : 82/100 (A-)
   └──────────────────────────────────────────────────────────┘
 ```
 
@@ -343,11 +326,10 @@ Full structured JSON output with all 12 benchmark categories:
     "disk": { "1m_read_mb_per_sec": 1234.5, "4k_read_iops": 1100 },
     "network": { "download_mbps": 456.78, "upload_mbps": 123.45, "avg_latency_ms": 12.34 },
     "geekbench_6": { "single_core_score": 1234, "multi_core_score": 5678 },
-    "advanced_cpu": { "matrix_bogo_ops": 1234.56, "fpu_bogo_ops": 567.89 },
+    "advanced_cpu": { "aes_256_gcm": "12345.67k", "sha_256": "67890.12k" },
     "advanced_memory": { "256b_read_mib_per_sec": 12345 },
     "advanced_disk": { "fio_random_4k_read_iops": 45678, "ioping_latency_ms": 0.42 },
     "advanced_network": { "ipv6_download_mbps": 456.78, "packet_loss_pct": 0 },
-    "y_cruncher": { "digits_millions": 1000, "compute_time_sec": 12.345 },
     "unixbench": { "index_score": 1234.5 }
   },
   "scores": { "cpu": 23, "memory": 18, "disk": 15, "network": 22, "geekbench": 24, "total": 82, "max": 100, "grade": "A-" }
@@ -368,12 +350,11 @@ Pipe through `jq` for pretty-printing: `./habs.sh --json 2>/dev/null | jq .`
 | `ping`      | Yes      | Network latency, packet loss          | ❌ (pre-installed) |
 | `python3`   | Yes      | JSON parsing (fio, iperf3, Geekbench) | ❌ (pre-installed) |
 | `bc`        | Yes      | Arithmetic calculations               | ❌ (pre-installed) |
-| `stress-ng` | Yes*     | Advanced CPU (matrix, FPU, crypto, cache) | ✅        |
+| `stress-ng` | Yes*     | Advanced CPU (threaded sysbench + crypto) | ✅        |
 | `fio`       | Yes*     | Advanced disk (random 4K QD=32)       | ✅           |
 | `ioping`    | No       | Disk latency (advanced disk)          | ✅           |
 | `iperf3`    | No       | Upload speed test                     | ✅           |
 | `traceroute` | No      | Hop count (advanced network)          | ✅           |
-| `gcc`/`make`/`perl` | No | UnixBench compilation           | ❌ (apt/yum) |
 
 `*` Part of advanced benchmarks (skippable via `--skip-advanced`)
 
