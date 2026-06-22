@@ -73,7 +73,7 @@ HABS_SKIP_NETWORK=0
 HABS_SKIP_GEEKBENCH=0
 HABS_SKIP_ADVANCED=0
 HABS_SKIP_YCRUNCHER=0
-HABS_SKIP_UNIXBENCH=0
+HABS_SKIP_UNIXBENCH=1
 
 # Results accumulator (associative array)
 declare -A HABS_RESULTS=()
@@ -1198,11 +1198,11 @@ bench_geekbench6() {
 
     # Determine download URL based on architecture
     if [[ $arch == 'x86_64' ]]; then
-        gb_url='https://cdn.geekbench.com/Geekbench-6.4.0-Linux.tar.gz'
-        gb_dir='Geekbench-6.4.0-Linux'
+        gb_url='https://cdn.geekbench.com/Geekbench-6.7.1-Linux.tar.gz'
+        gb_dir='Geekbench-6.7.1-Linux'
     elif [[ $arch == 'aarch64' ]]; then
-        gb_url='https://cdn.geekbench.com/Geekbench-6.4.0-LinuxARMPremium.tar.gz'
-        gb_dir='Geekbench-6.4.0-LinuxARMPremium'
+        gb_url='https://cdn.geekbench.com/Geekbench-6.7.1-LinuxARMPremium.tar.gz'
+        gb_dir='Geekbench-6.7.1-LinuxARMPremium'
     else
         _print_line "${C_RED}Unsupported architecture for Geekbench 6: ${arch}${C_RESET}"
         _print_section_footer
@@ -1213,7 +1213,7 @@ bench_geekbench6() {
     local gb_extract="${HABS_TMPDIR}/geekbench"
 
     # Download
-    _spinner_start "Downloading Geekbench 6 (~100 MB) ..."
+    _spinner_start "Downloading Geekbench 6 (v6.7.1) ..."
     local dl_result
     dl_result=$(run_with_timeout 120 curl -sSL -o "$gb_tarball" "$gb_url" 2>&1 || true)
     _spinner_stop
@@ -1223,10 +1223,10 @@ bench_geekbench6() {
         _print_section_footer
         return 1
     fi
-    _ok "Downloaded Geekbench 6"
+    _ok "Downloaded Geekbench 6 (v6.7.1)"
 
     # Extract
-    _spinner_start "Extracting Geekbench 6 ..."
+    _spinner_start "Extracting Geekbench 6 (v6.7.1)..."
     mkdir -p "$gb_extract"
     tar xzf "$gb_tarball" -C "$gb_extract" 2>/dev/null || true
     _spinner_stop
@@ -1633,6 +1633,77 @@ display_scores() {
 }
 
 # =============================================================================
+#  OVERVIEW SUMMARY
+# =============================================================================
+
+display_overview() {
+    _print_section_header 'Overview'
+
+    _print_subheader "CPU"
+    _print_kv 'sysbench (single)' "$(fmt_number ${HABS_RESULTS[cpu_single_eps]:-0}) events/s" "${C_GREEN}"
+    _print_kv 'sysbench (multi)'  "$(fmt_number ${HABS_RESULTS[cpu_multi_eps]:-0}) events/s" "${C_GREEN}"
+    _print_kv 'Scaling'          "${HABS_RESULTS[cpu_scaling]:-0}x" "${C_GREEN}"
+    _print_kv 'Matrix (stress-ng)' "${HABS_RESULTS[adv_cpu_matrix]:-0} bogo ops/s" "${C_GREEN}"
+    _print_kv 'FPU (stress-ng)'   "${HABS_RESULTS[adv_cpu_fpu]:-0} bogo ops/s" "${C_GREEN}"
+    _print_kv 'Crypto (stress-ng)' "${HABS_RESULTS[adv_cpu_crypto]:-0} bogo ops/s" "${C_GREEN}"
+    _print_kv 'Cache (stress-ng)' "${HABS_RESULTS[adv_cpu_cache]:-0} bogo ops/s" "${C_GREEN}"
+
+    _print_empty
+    _print_subheader "Memory"
+    _print_kv 'Read (1M)'   "${HABS_RESULTS[mem_read_mbs]:-0} MiB/s" "${C_GREEN}"
+    _print_kv 'Write (1M)'  "${HABS_RESULTS[mem_write_mbs]:-0} MiB/s" "${C_GREEN}"
+    _print_kv 'L1 Cache (256B)'  "${HABS_RESULTS[adv_mem_256b]:-0} MiB/s" "${C_GREEN}"
+    _print_kv 'L2/L3 (4K)'    "${HABS_RESULTS[adv_mem_4k]:-0} MiB/s" "${C_GREEN}"
+    _print_kv 'RAM (64K)'  "${HABS_RESULTS[adv_mem_64k]:-0} MiB/s" "${C_GREEN}"
+    _print_kv 'RAM (1M)'  "${HABS_RESULTS[adv_mem_1m]:-0} MiB/s" "${C_GREEN}"
+
+    _print_empty
+    _print_subheader "Storage"
+    _print_kv '1M Seq Write'  "${HABS_RESULTS[disk_1m_write_mbs]:-0} MB/s" "${C_GREEN}"
+    _print_kv '1M Seq Read'   "${HABS_RESULTS[disk_1m_read_mbs]:-0} MB/s" "${C_GREEN}"
+    _print_kv '4K Rand Write' "${HABS_RESULTS[disk_4k_write_mbs]:-0} MB/s (${HABS_RESULTS[disk_4k_write_iops]:-0} IOPS)" "${C_GREEN}"
+    _print_kv '4K Rand Read'  "${HABS_RESULTS[disk_4k_read_mbs]:-0} MB/s (${HABS_RESULTS[disk_4k_read_iops]:-0} IOPS)" "${C_GREEN}"
+    _print_kv 'FIO 4K Read'   "${HABS_RESULTS[adv_disk_fio_read_iops]:-0} IOPS (${HABS_RESULTS[adv_disk_fio_read_lat_us]:-0} µs)" "${C_GREEN}"
+    _print_kv 'FIO 4K Write'  "${HABS_RESULTS[adv_disk_fio_write_iops]:-0} IOPS (${HABS_RESULTS[adv_disk_fio_write_lat_us]:-0} µs)" "${C_GREEN}"
+    _print_kv 'ioping Latency' "${HABS_RESULTS[adv_disk_ioping_lat_ms]:-0} ms" "${C_GREEN}"
+
+    _print_empty
+    _print_subheader "Network"
+    _print_kv 'Download'     "${HABS_RESULTS[net_download_mbps]:-0} Mbps" "${C_GREEN}"
+    _print_kv 'Upload'       "${HABS_RESULTS[net_upload_mbps]:-0} Mbps" "${C_GREEN}"
+    _print_kv 'Avg Latency'  "${HABS_RESULTS[net_avg_latency]:-0} ms" "${C_GREEN}"
+    _print_kv 'IPv6 DL'      "${HABS_RESULTS[adv_net_ipv6_mbps]:-0} Mbps" "${C_GREEN}"
+    _print_kv 'Packet Loss'  "${HABS_RESULTS[adv_net_packet_loss_pct]:-0}%" "${C_GREEN}"
+    _print_kv 'Traceroute'   "${HABS_RESULTS[adv_net_traceroute_hops]:-0} hops" "${C_GREEN}"
+
+    _print_empty
+    _print_subheader "Geekbench 6"
+    _print_kv 'Single-Core'  "${HABS_RESULTS[geekbench_single]:-0}" "${C_GREEN}"
+    _print_kv 'Multi-Core'   "${HABS_RESULTS[geekbench_multi]:-0}" "${C_GREEN}"
+
+    _print_empty
+    _print_subheader "y-cruncher"
+    _print_kv 'Digits'       "${HABS_RESULTS[ycruncher_digits]:-0}M" "${C_GREEN}"
+    _print_kv 'Compute Time' "${HABS_RESULTS[ycruncher_time]:-0}s" "${C_GREEN}"
+
+    _print_empty
+    _print_subheader "UnixBench"
+    _print_kv 'Index Score'  "${HABS_RESULTS[unixbench_index]:-0}" "${C_GREEN}"
+
+    _print_empty
+    _print_subheader "Scores"
+    _print_kv 'CPU'          "$(printf '%.1f' ${HABS_RESULTS[score_cpu]:-0})/25" "${C_GREEN}"
+    _print_kv 'Memory'       "$(printf '%.1f' ${HABS_RESULTS[score_memory]:-0})/25" "${C_GREEN}"
+    _print_kv 'Disk'         "$(printf '%.1f' ${HABS_RESULTS[score_disk]:-0})/25" "${C_GREEN}"
+    _print_kv 'Network'      "$(printf '%.1f' ${HABS_RESULTS[score_network]:-0})/25" "${C_GREEN}"
+    _print_kv 'Geekbench'    "$(printf '%.1f' ${HABS_RESULTS[score_geekbench]:-0})/25" "${C_GREEN}"
+    _print_empty
+    _print_kv_b 'Total'      "${HABS_RESULTS[score_total]:-0}/100 (${HABS_RESULTS[score_grade]:-F})"
+
+    _print_section_footer
+}
+
+# =============================================================================
 #  JSON EXPORT
 # =============================================================================
 
@@ -1847,7 +1918,7 @@ print_banner() {
     printf "%s${C_BOLD}${C_CYAN} ║                                                                ║${C_RESET}\n" "$pad_str"
     printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_GREY}Hyper Absolute Benchmark Script${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
     printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_GREY}Version ${HABS_VERSION}${C_RESET}                                        ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
-    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_GREY}${HABS_URL}${C_RESET}     ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_GREY}github.com/anjarman20/Hyper-Absolute-Benchmark-Script${C_RESET}  ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
     printf "%s${C_BOLD}${C_CYAN} ║                                                                ║${C_RESET}\n" "$pad_str"
     printf "%s${C_BOLD}${C_CYAN} ╚════════════════════════════════════════════════════════╝${C_RESET}\n" "$pad_str"
     echo ""
@@ -1863,6 +1934,8 @@ print_config_banner() {
     [[ $HABS_SKIP_ADVANCED -eq 1 ]] && skipped+=' advanced'
     [[ $HABS_SKIP_YCRUNCHER -eq 1 ]] && skipped+=' y-cruncher'
     [[ $HABS_SKIP_UNIXBENCH -eq 1 ]] && skipped+=' unixbench'
+    local enabled=''
+    [[ $HABS_SKIP_UNIXBENCH -eq 0 ]] && enabled+=' unixbench'
 
     local mode='standard'
     [[ $HABS_QUICK -eq 1 ]] && mode='quick'
@@ -1874,6 +1947,9 @@ print_config_banner() {
         _print_kv 'Skipped' "${skipped}" "${C_YELLOW}"
     else
         _print_kv 'Skipped' 'none' "${C_GREEN}"
+    fi
+    if [[ -n "$enabled" ]]; then
+        _print_kv 'Enabled' "${enabled}" "${C_GREEN}"
     fi
     _print_kv 'JSON'     "$([[ $HABS_JSON -eq 1 ]] && echo 'enabled' || echo 'disabled')" "${C_CYAN}"
     _print_kv 'Output'   "${HABS_OUTPUT_FILE:-stdout}" "${C_CYAN}"
@@ -1913,7 +1989,7 @@ Options:
   --skip-geekbench      Skip Geekbench 6
   --skip-advanced       Skip all advanced benchmarks
   --skip-y-cruncher     Skip y-cruncher benchmark
-  --skip-unixbench      Skip UnixBench benchmark
+  --enable-unixbench   Enable UnixBench (disabled by default, requires gcc+make+perl)
   --quick, -q           Quick mode — shorter tests
   --full, -f            Full mode — comprehensive tests
   --json                Output results as JSON to stdout
@@ -1944,7 +2020,7 @@ parse_args() {
             --skip-geekbench)    HABS_SKIP_GEEKBENCH=1 ;;
             --skip-advanced)     HABS_SKIP_ADVANCED=1 ;;
             --skip-y-cruncher)   HABS_SKIP_YCRUNCHER=1 ;;
-            --skip-unixbench)    HABS_SKIP_UNIXBENCH=1 ;;
+            --enable-unixbench)          HABS_SKIP_UNIXBENCH=0 ;;
             --quick|-q)          HABS_QUICK=1 ;;
             --full|-f)           HABS_FULL=1 ;;
             --json)              HABS_JSON=1 ;;
@@ -1971,7 +2047,7 @@ _install_deps() {
     [[ $HABS_SKIP_ADVANCED -eq 0 ]]      && install_list+=(stress-ng traceroute)
     [[ $HABS_SKIP_GEEKBENCH -eq 0 ]]     && true
     [[ $HABS_SKIP_YCRUNCHER -eq 0 ]]     && true
-    [[ $HABS_SKIP_UNIXBENCH -eq 0 ]]     && true
+    [[ $HABS_SKIP_UNIXBENCH -eq 0 ]]      && install_list+=(gcc make perl)
 
     local -A seen=()
     for pkg in "${install_list[@]}"; do
@@ -2078,6 +2154,8 @@ main() {
     if [[ $show_output -eq 1 ]]; then
         echo ""
         display_scores
+        echo ""
+        display_overview
     fi
 
     # Restore stdout before JSON output
