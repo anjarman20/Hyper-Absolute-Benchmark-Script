@@ -1,1639 +1,2079 @@
 #!/usr/bin/env bash
+# =============================================================================
+#  HABS – Hyper Absolute Benchmark Script
+#  Version: 2.0.0
+#  URL:     https://github.com/anjarman20/Hyper-Absolute-Benchmark-Script
+#  License: WTFPL
 #
-# HABS - Hyper Absolute Benchmark Script
-# Modern Linux benchmark tool with Geekbench 6 & advanced benchmarks
-# Supports VPS, dedicated servers, and cloud infrastructure
-#
-# Usage:
-#   bash <(curl -sSL https://raw.githubusercontent.com/anjarman20/Hyper-Absolute-Benchmark-Script/main/habs.sh)
-#   bash habs.sh [options]
-#
-# Options:
-#   -h, --help            Show help message
-#   --version             Show version
-#   --skip-cpu            Skip CPU benchmark
-#   --skip-memory         Skip memory benchmark
-#   --skip-disk           Skip disk benchmark
-#   --skip-network        Skip network benchmark
-#   -q, --quick           Quick mode (shorter/darker tests)
-#   -f, --full            Full mode (comprehensive tests)
-#   --json                Output results as JSON
-#   --output FILE         Save results to file
-#   --no-color            Disable colored output
-#   -v, --verbose         Verbose output
-#
-# All benchmarks (Geekbench 6, advanced CPU/memory/disk/network)
-# run by default. Use --skip-* flags to exclude specific tests.
+#  A modern Linux benchmarking suite combining YABS and byte-unixbench
+#  functionality with integrated dependency management, Geekbench 6,
+#  y-cruncher, fio, stress-ng, iperf3, and clean JSON export.
+# =============================================================================
 
 set -euo pipefail
+shopt -s extglob nullglob
 
-# ============================================================
-# GLOBALS
-# ============================================================
-readonly VERSION="2.0.0"
-START_TIME=0
-TEMP_FILES=()
+# -------- Constants ----------------------------------------------------------
+readonly HABS_VERSION='2.0.0'
+readonly HABS_URL='https://github.com/anjarman20/Hyper-Absolute-Benchmark-Script'
+readonly HABS_NAME='HABS'
+readonly HABS_COPYRIGHT='© 2026 HABS Contributors'
 
-# CLI configuration
-CONFIG_SKIP_CPU=false
-CONFIG_SKIP_MEMORY=false
-CONFIG_SKIP_DISK=false
-CONFIG_SKIP_NETWORK=false
-CONFIG_GEEKBENCH=true
-CONFIG_ADVANCED=true
-CONFIG_QUICK=false
-CONFIG_FULL=false
-CONFIG_JSON=false
-CONFIG_OUTPUT=""
-CONFIG_NO_COLOR=false
-CONFIG_VERBOSE=false
+# Minimum required Bash version
+if [[ ${BASH_VERSINFO[0]} -lt 4 ]]; then
+    echo "Error: HABS requires Bash 4.0 or later (found ${BASH_VERSION})" >&2
+    exit 1
+fi
 
-# Standard results
-RESULT_CPU_SINGLE=0
-RESULT_CPU_MULTI=0
-RESULT_MEM_READ=0
-RESULT_MEM_WRITE=0
-RESULT_DISK_4K_WRITE=0
-RESULT_DISK_4K_READ=0
-RESULT_DISK_1M_WRITE=0
-RESULT_DISK_1M_READ=0
-RESULT_NET_DOWNLOAD=0
-RESULT_NET_UPLOAD=0
-RESULT_NET_LATENCY=0
+# Geometry
+readonly BOX_HW='─' BOX_VW='│' BOX_TR='┐' BOX_TL='┌' BOX_BR='┘' BOX_BL='└'
+readonly BOX_TM='┬' BOX_BM='┴' BOX_LM='├' BOX_RM='┤' BOX_CR='┼'
 
-# Geekbench results
-RESULT_GB_SINGLE=0
-RESULT_GB_MULTI=0
+# -------- Color Definitions --------------------------------------------------
+C_RESET='' C_BOLD='' C_DIM='' C_RED='' C_GREEN='' C_YELLOW=''
+C_BLUE='' C_MAGENTA='' C_CYAN='' C_WHITE='' C_ORANGE='' C_GREY=''
 
-# Advanced CPU results
-RESULT_ADV_CPU_MATRIX=0
-RESULT_ADV_CPU_FPU=0
-RESULT_ADV_CPU_CRYPT=0
-RESULT_ADV_CPU_CACHE=0
-
-# Advanced memory results
-RESULT_ADV_MEM_LATENCY=0
-RESULT_ADV_MEM_256B=0
-RESULT_ADV_MEM_4K=0
-RESULT_ADV_MEM_64K=0
-RESULT_ADV_MEM_1M=0
-
-# Advanced disk results
-RESULT_ADV_FIO_RND_R_IOPS=0
-RESULT_ADV_FIO_RND_W_IOPS=0
-RESULT_ADV_FIO_RND_R_LAT=0
-RESULT_ADV_FIO_RND_W_LAT=0
-RESULT_ADV_IOPING_LAT=0
-
-# Advanced network results
-RESULT_ADV_NET_IPV6=0
-RESULT_ADV_NET_PLOSS=0
-RESULT_ADV_NET_HOPS=0
-
-# System info
-SYS_HOSTNAME=""
-SYS_OS=""
-SYS_KERNEL=""
-SYS_UPTIME=""
-SYS_CPU_MODEL=""
-SYS_CPU_CORES=0
-SYS_CPU_THREADS=0
-SYS_CPU_FREQ=""
-SYS_CPU_CACHE=""
-SYS_CPU_FLAGS=""
-SYS_RAM_TOTAL=0
-SYS_RAM_USED=0
-SYS_RAM_AVAIL=0
-SYS_SWAP_TOTAL=0
-SYS_DISK_TOTAL=""
-SYS_DISK_USED=""
-SYS_DISK_AVAIL=""
-SYS_DISK_PCT=""
-SYS_DISK_MOUNT=""
-SYS_DISK_FSTYPE=""
-SYS_VIRT=""
-SYS_LOAD=""
-SYS_ARCH=""
-SYS_AES=""
-SYS_VMX=""
-SYS_ISP=""
-SYS_ASN=""
-SYS_ORG=""
-SYS_LOCATION=""
-SYS_COUNTRY=""
-SYS_IPV4=false
-SYS_IPV6=false
-
-# ============================================================
-# COLOR DEFINITIONS
-# ============================================================
-setup_colors() {
-  if [ -t 1 ] && [ "$CONFIG_NO_COLOR" = false ]; then
-    C_RESET='\033[0m'
-    C_BOLD='\033[1m'
-    C_DIM='\033[2m'
-    C_ITALIC='\033[3m'
-    C_RED='\033[0;31m'
-    C_GREEN='\033[0;32m'
-    C_YELLOW='\033[0;33m'
-    C_BLUE='\033[0;34m'
-    C_MAGENTA='\033[0;35m'
-    C_CYAN='\033[0;36m'
-    C_WHITE='\033[0;37m'
-  else
-    C_RESET=''; C_BOLD=''; C_DIM=''; C_ITALIC=''
-    C_RED=''; C_GREEN=''; C_YELLOW=''
-    C_BLUE=''; C_MAGENTA=''; C_CYAN=''; C_WHITE=''
-  fi
-
-  # Box-drawing: ASCII by default (always safe), Unicode only with HABS_UNICODE=1
-  if [ "${HABS_UNICODE:-0}" = "1" ] && [ "$CONFIG_NO_COLOR" = false ]; then
-    C_TL="┌"; C_TR="┐"; C_BL="└"; C_BR="┘"
-    C_H="─"; C_V="│"
-  else
-    C_TL="+"; C_TR="+"; C_BL="+"; C_BR="+"
-    C_H="-"; C_V="|"
-  fi
+_init_colors() {
+    if [[ $HABS_NOCOLOR -eq 1 ]]; then
+        C_RESET='' C_BOLD='' C_DIM='' C_RED='' C_GREEN='' C_YELLOW=''
+        C_BLUE='' C_MAGENTA='' C_CYAN='' C_WHITE='' C_ORANGE='' C_GREY=''
+        return
+    fi
+    if [[ -t 1 ]] && [[ ${TERM:-} != dumb ]] && command -v tput &>/dev/null; then
+        C_RESET=$(tput sgr0 2>/dev/null || true)
+        C_BOLD=$(tput bold 2>/dev/null || true)
+        C_DIM=$(tput dim 2>/dev/null || true)
+        C_RED=$(tput setaf 1 2>/dev/null || true)
+        C_GREEN=$(tput setaf 2 2>/dev/null || true)
+        C_YELLOW=$(tput setaf 3 2>/dev/null || true)
+        C_BLUE=$(tput setaf 4 2>/dev/null || true)
+        C_MAGENTA=$(tput setaf 5 2>/dev/null || true)
+        C_CYAN=$(tput setaf 6 2>/dev/null || true)
+        C_WHITE=$(tput setaf 7 2>/dev/null || true)
+        C_ORANGE=$(tput setaf 208 2>/dev/null || true)
+        C_GREY=$(tput setaf 244 2>/dev/null || true)
+    fi
 }
 
-# ============================================================
-# UTILITY FUNCTIONS
-# ============================================================
+# -------- Global State -------------------------------------------------------
+HABS_NOCOLOR=0
+HABS_QUICK=0
+HABS_FULL=0
+HABS_JSON=0
+HABS_VERBOSE=0
+HABS_OUTPUT_FILE=''
+HABS_START_TIME=0
+HABS_END_TIME=0
 
-die() {
-  echo -e "${C_RED}Error:${C_RESET} $1" >&2
-  exit 1
+# Skip flags
+HABS_SKIP_CPU=0
+HABS_SKIP_MEMORY=0
+HABS_SKIP_DISK=0
+HABS_SKIP_NETWORK=0
+HABS_SKIP_GEEKBENCH=0
+HABS_SKIP_ADVANCED=0
+HABS_SKIP_YCRUNCHER=0
+HABS_SKIP_UNIXBENCH=0
+
+# Results accumulator (associative array)
+declare -A HABS_RESULTS=()
+
+# Additional data structures for complex results
+declare -A HABS_SYSINFO=()
+declare -A HABS_SCORES=()
+HABS_JSON_EXTRA=""
+
+# Temp directory
+HABS_TMPDIR=''
+HABS_GEK_BIN=''
+HABS_YC_BIN=''
+HABS_UB_DIR=''
+
+# -------- Signal Handling ----------------------------------------------------
+_cleanup_exit() {
+    local ec=$?
+    if [[ -n "${HABS_TMPDIR:-}" ]] && [[ -d "$HABS_TMPDIR" ]]; then
+        rm -rf "$HABS_TMPDIR" 2>/dev/null || true
+    fi
+    if [[ $ec -ne 0 ]] && [[ $ec -ne 0 ]]; then
+        echo -e "\n${C_RED}✖${C_RESET} HABS interrupted. Cleaning up..." >&2
+    fi
+    exit $ec
+}
+trap _cleanup_exit EXIT INT TERM
+
+# -------- Utility Functions --------------------------------------------------
+
+_log()    { local lvl=$1; shift; echo -e "${C_GREY}[${lvl}]${C_RESET} $*" >&2; }
+_info()   { _log "${C_BLUE}INFO${C_RESET}" "$@"; }
+_warn()   { _log "${C_YELLOW}WARN${C_RESET}" "$@"; }
+_error()  { _log "${C_RED}ERROR${C_RESET}" "$@"; }
+_debug()  { [[ $HABS_VERBOSE -eq 1 ]] && _log "${C_DIM}DEBUG${C_RESET}" "$@"; }
+_ok()     { echo -e "  ${C_GREEN}✔${C_RESET} $*"; }
+_skip()   { echo -e "  ${C_YELLOW}⊘${C_RESET} $*"; }
+_fail()   { echo -e "  ${C_RED}✖${C_RESET} $*"; }
+
+fmt_number() {
+    local n=$1
+    local decimals=${2:-2}
+    if [[ $(echo "$n < 1000" | bc 2>/dev/null) == 1 ]] 2>/dev/null; then
+        printf "%.${decimals}f" "$n"
+    else
+        printf "%'.${decimals}f" "$n"
+    fi
 }
 
-log_debug() {
-  [ "$CONFIG_VERBOSE" = true ] && echo -e "${C_DIM}[DEBUG]${C_RESET} $1" >&2 || true
+fmt_bytes() {
+    local bytes=$1
+    if [[ $bytes -lt 1024 ]]; then echo "${bytes} B"
+    elif [[ $bytes -lt 1048576 ]]; then printf "%.2f KB" "$(echo "scale=2; $bytes/1024" | bc -l 2>/dev/null || echo "$bytes/1024" | awk '{printf "%.2f", $1}')"
+    elif [[ $bytes -lt 1073741824 ]]; then printf "%.2f MB" "$(echo "scale=2; $bytes/1048576" | bc -l 2>/dev/null || echo "$bytes/1048576" | awk '{printf "%.2f", $1}')"
+    else printf "%.2f GB" "$(echo "scale=2; $bytes/1073741824" | bc -l 2>/dev/null || echo "$bytes/1073741824" | awk '{printf "%.2f", $1}')"
+    fi
 }
 
-log_info() {
-  echo -e "${C_BLUE}==>${C_RESET} $1" >&2
+fmt_duration() {
+    local total=$1
+    local d=$((total / 86400))
+    local h=$(( (total % 86400) / 3600 ))
+    local m=$(( (total % 3600) / 60 ))
+    local s=$((total % 60))
+    local out=''
+    [[ $d -gt 0 ]] && out+="${d}d "
+    [[ $h -gt 0 ]] && out+="${h}h "
+    [[ $m -gt 0 ]] && out+="${m}m "
+    out+="${s}s"
+    echo "$out"
 }
 
-log_success() {
-  echo -e "${C_GREEN}==>${C_RESET} $1" >&2
+run_with_timeout() {
+    local timeout_sec=$1; shift
+    if ! command -v timeout &>/dev/null; then
+        "$@" 2>&1 || true
+        return
+    fi
+    timeout "$timeout_sec" "$@" 2>&1 || true
 }
 
-log_warn() {
-  echo -e "${C_YELLOW}==>${C_RESET} $1" >&2
+check_command() {
+    command -v "$1" &>/dev/null
 }
 
-format_bytes() {
-  local bytes=$1 precision=${2:-2}
-  if [ "$(awk "BEGIN {print ($bytes < 1024)}")" -eq 1 ]; then
-    echo "${bytes} B"
-  elif [ "$(awk "BEGIN {print ($bytes < 1048576)}")" -eq 1 ]; then
-    awk "BEGIN {printf \"%.${precision}f KiB\", $bytes/1024}"
-  elif [ "$(awk "BEGIN {print ($bytes < 1073741824)}")" -eq 1 ]; then
-    awk "BEGIN {printf \"%.${precision}f MiB\", $bytes/1048576}"
-  else
-    awk "BEGIN {printf \"%.${precision}f GiB\", $bytes/1073741824}"
-  fi
+json_escape() {
+    local s=$1
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    s=${s//$'\n'/\\n}
+    s=${s//$'\t'/\\t}
+    s=${s//$'\r'/\\r}
+    echo "$s"
 }
 
-format_duration() {
-  local s=${1:-0} d=0 h=0 m=0
-  d=$((s / 86400)); s=$((s % 86400))
-  h=$((s / 3600));  s=$((s % 3600))
-  m=$((s / 60));    s=$((s % 60))
-  local out=""
-  [ "$d" -gt 0 ] && out="${d}d "
-  [ "$h" -gt 0 ] && out="${out}${h}h "
-  [ "$m" -gt 0 ] && out="${out}${m}m "
-  out="${out}${s}s"
-  echo "$out"
+json_kv() {
+    local key=$1 val=$2 comma=${3:-false}
+    local q=''
+    [[ $comma == true ]] && q=','
+    if [[ $val =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ $val == 'null' ]] || [[ $val == 'true' ]] || [[ $val == 'false' ]]; then
+        printf '  "%s": %s%s\n' "$(json_escape "$key")" "$val" "$q"
+    else
+        printf '  "%s": "%s"%s\n' "$(json_escape "$key")" "$(json_escape "$val")" "$q"
+    fi
 }
 
-cleanup() {
-  for f in "${TEMP_FILES[@]}"; do
-    [ -f "$f" ] && rm -f "$f" 2>/dev/null || true
-  done
+json_kv_raw() {
+    local key=$1 val=$2 comma=${3:-false}
+    local q=''
+    [[ $comma == true ]] && q=','
+    printf '  "%s": %s%s\n' "$(json_escape "$key")" "$val" "$q"
 }
 
-cleanup_geekbench() {
-  [ -n "${GB_DIR:-}" ] && [ -d "$GB_DIR" ] && rm -rf "$GB_DIR" 2>/dev/null || true
+detect_package_manager() {
+    if check_command apt-get; then
+        echo 'apt-get'
+    elif check_command dnf; then
+        echo 'dnf'
+    elif check_command yum; then
+        echo 'yum'
+    elif check_command zypper; then
+        echo 'zypper'
+    elif check_command pacman; then
+        echo 'pacman'
+    elif check_command apk; then
+        echo 'apk'
+    else
+        echo ''
+    fi
 }
 
-setup_signals() {
-  trap cleanup EXIT
-  trap 'echo -e "\n${C_YELLOW}Interrupted. Cleaning up...${C_RESET}"; cleanup; cleanup_geekbench; exit 1' INT TERM
-}
+auto_install() {
+    local pkg=$1
+    local pm
+    pm=$(detect_package_manager)
+    if [[ -z $pm ]]; then
+        _warn "No package manager found. Please install '${pkg}' manually."
+        return 1
+    fi
 
-command_exists() {
-  command -v "$1" &>/dev/null
-}
+    if [[ $EUID -ne 0 ]]; then
+        _warn "Not running as root. Please install '${pkg}' manually (${pm})."
+        return 1
+    fi
 
-is_root() {
-  [ "$(id -u)" -eq 0 ]
-}
+    _info "Installing '${pkg}' via ${pm}..."
 
-download_url() {
-  local url=$1 dest=$2 timeout=${3:-60}
-  if command_exists curl; then
-    curl -sSL --max-time "$timeout" -o "$dest" "$url" 2>/dev/null
-  elif command_exists wget; then
-    wget -q --timeout="$timeout" -O "$dest" "$url" 2>/dev/null
-  else
-    return 1
-  fi
-}
+    case $pm in
+        apt-get) apt-get update -qq && apt-get install -y -qq "$pkg" ;;
+        dnf)     dnf install -y -q "$pkg" ;;
+        yum)     yum install -y -q "$pkg" ;;
+        zypper)  zypper install -y "$pkg" ;;
+        pacman)  pacman -S --noconfirm "$pkg" ;;
+        apk)     apk add --no-cache "$pkg" ;;
+    esac 2>/dev/null
 
-# ============================================================
-# SECTION HEADERS
-# ============================================================
-
-print_header() {
-  echo ""
-  echo -e "  ${C_CYAN} _   _    _    ____   ____  ${C_RESET}"
-  echo -e "  ${C_CYAN}| | | |  / \  | __ ) / ___| ${C_RESET}  ${C_BOLD}Hyper Absolute Benchmark Script${C_RESET}"
-  echo -e "  ${C_CYAN}| |_| | / _ \ |  _ \ \___ \\ ${C_RESET}  ${C_DIM}Version ${VERSION}${C_RESET}"
-  echo -e "  ${C_CYAN}|  _  |/ ___ \\| |_) | ___) |${C_RESET}  ${C_DIM}Modern Linux Benchmark Tool${C_RESET}"
-  echo -e "  ${C_CYAN}|_| |_/_/   \\_\\____/|____/ ${C_RESET}"
-  echo ""
-  local cols=58
-  printf "  ${C_DIM}%s${C_RESET}\n" "$(printf '%*s' "$cols" | tr ' ' "${C_H}")"
-  echo ""
-}
-
-section_start() {
-  echo ""
-  echo -e "  ${C_BOLD}${C_CYAN}${C_TL} $1 ${C_H}$(printf '%*s' $((50 - ${#1})) '' | tr ' ' "${C_H}")${C_TR}${C_RESET}"
-}
-
-section_end() {
-  echo -e "  ${C_BOLD}${C_CYAN}${C_BL}$(printf '%*s' 56 '' | tr ' ' "${C_H}")${C_BR}${C_RESET}"
-  echo ""
-}
-
-info_row() {
-  printf "  ${C_BOLD}%-18s${C_RESET} %s\n" " $1" ": $2"
-}
-
-# ============================================================
-# INSTALL DEPENDENCIES
-# ============================================================
-
-_SYSBENCH_CHECKED=false
-_SYSBENCH_AVAILABLE=false
-
-ensure_sysbench() {
-  if [ "$_SYSBENCH_CHECKED" = true ]; then
-    [ "$_SYSBENCH_AVAILABLE" = true ] && return 0 || return 1
-  fi
-  _SYSBENCH_CHECKED=true
-  if command_exists sysbench; then
-    _SYSBENCH_AVAILABLE=true
+    if ! check_command "$pkg"; then
+        _error "Failed to install '${pkg}'. Please install manually."
+        return 1
+    fi
+    _ok "Installed '${pkg}'"
     return 0
-  fi
-  log_info "Installing sysbench..."
-  if command_exists apt-get; then
-    apt-get install -y sysbench &>/dev/null && { log_success "sysbench installed"; _SYSBENCH_AVAILABLE=true; return 0; }
-  elif command_exists yum; then
-    yum install -y sysbench &>/dev/null && { log_success "sysbench installed"; _SYSBENCH_AVAILABLE=true; return 0; }
-  elif command_exists apk; then
-    apk add sysbench &>/dev/null && { log_success "sysbench installed"; _SYSBENCH_AVAILABLE=true; return 0; }
-  elif command_exists pacman; then
-    pacman -S --noconfirm sysbench &>/dev/null && { log_success "sysbench installed"; _SYSBENCH_AVAILABLE=true; return 0; }
-  elif command_exists zypper; then
-    zypper install -y sysbench &>/dev/null && { log_success "sysbench installed"; _SYSBENCH_AVAILABLE=true; return 0; }
-  fi
-  log_warn "sysbench could not be installed. CPU/memory benchmarks will be skipped."
-  return 1
 }
 
-ensure_stress_ng() {
-  if command_exists stress-ng; then
+ensure_command() {
+    local cmd=$1 pkg=${2:-$1}
+    if ! check_command "$cmd"; then
+        auto_install "$pkg" || return 1
+    fi
     return 0
-  fi
-  log_info "Installing stress-ng..."
-  if command_exists apt-get; then
-    apt-get install -y stress-ng &>/dev/null && log_success "stress-ng installed" && return 0
-  elif command_exists yum; then
-    yum install -y stress-ng &>/dev/null && log_success "stress-ng installed" && return 0
-  elif command_exists apk; then
-    apk add stress-ng &>/dev/null && log_success "stress-ng installed" && return 0
-  elif command_exists pacman; then
-    pacman -S --noconfirm stress-ng &>/dev/null && log_success "stress-ng installed" && return 0
-  elif command_exists zypper; then
-    zypper install -y stress-ng &>/dev/null && log_success "stress-ng installed" && return 0
-  fi
-  log_warn "stress-ng not available. Advanced CPU skipped."
-  return 1
 }
 
-ensure_fio() {
-  if command_exists fio; then
-    return 0
-  fi
-  log_info "Installing fio..."
-  if command_exists apt-get; then
-    apt-get install -y fio &>/dev/null && log_success "fio installed" && return 0
-  elif command_exists yum; then
-    yum install -y fio &>/dev/null && log_success "fio installed" && return 0
-  elif command_exists apk; then
-    apk add fio &>/dev/null && log_success "fio installed" && return 0
-  elif command_exists pacman; then
-    pacman -S --noconfirm fio &>/dev/null && log_success "fio installed" && return 0
-  fi
-  log_warn "fio not available. Advanced disk skipped."
-  return 1
+get_term_width() {
+    if [[ -t 1 ]]; then
+        tput cols 2>/dev/null || echo 80
+    else
+        echo 80
+    fi
 }
 
-# ============================================================
-# SYSTEM INFORMATION
-# ============================================================
+get_arch() {
+    local arch
+    arch=$(uname -m)
+    case $arch in
+        x86_64|amd64)   echo 'x86_64' ;;
+        aarch64|arm64)  echo 'aarch64' ;;
+        *)             echo "$arch" ;;
+    esac
+}
+
+_ensure_tmpdir() {
+    if [[ -z $HABS_TMPDIR ]]; then
+        HABS_TMPDIR=$(mktemp -d "/tmp/habs.XXXXXX")
+    fi
+}
+
+# -------- Progress / Spinner -------------------------------------------------
+
+_spin_pid=0
+_spin_msg=''
+
+_spinner_start() {
+    _spin_msg=$1
+    if [[ $HABS_VERBOSE -eq 1 ]]; then
+        echo -ne "  ${C_CYAN}⟳${C_RESET} ${_spin_msg}"
+        return
+    fi
+    local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    (
+        local i=0
+        while kill -0 "$$" 2>/dev/null; do
+            local ch="${spin:$i:1}"
+            echo -ne "\r  ${C_CYAN}${ch}${C_RESET} ${_spin_msg}"
+            i=$(( (i + 1) % ${#spin} ))
+            sleep 0.1
+        done
+    ) &
+    _spin_pid=$!
+    disown $_spin_pid 2>/dev/null || true
+}
+
+_spinner_stop() {
+    if [[ $_spin_pid -ne 0 ]]; then
+        kill $_spin_pid 2>/dev/null || true
+        wait $_spin_pid 2>/dev/null || true
+        _spin_pid=0
+    fi
+    echo -ne "\r\033[K"
+    [[ $HABS_VERBOSE -eq 1 ]] || true
+}
+
+_spinner_ok() {
+    _spinner_stop
+    _ok "$_spin_msg"
+}
+
+_spinner_fail() {
+    _spinner_stop
+    _fail "$_spin_msg"
+}
+
+# =============================================================================
+#  OUTPUT / DISPLAY FUNCTIONS
+# =============================================================================
+
+_make_hline() {
+    local len=$1
+    local i
+    for ((i=0; i<len; i++)); do
+        echo -n "${BOX_HW}"
+    done
+}
+
+_print_section_header() {
+    local title=$1
+    local tw
+    tw=$(get_term_width)
+    local inner=$(( tw - 4 ))
+    local title_len=${#title}
+    local dash_len=$(( inner - title_len - 2 ))
+    [[ $dash_len -lt 1 ]] && dash_len=1
+
+    printf "  ${C_BOLD}${C_CYAN}%s${C_RESET}" "${BOX_TL}"
+    printf "${BOX_HW} ${C_BOLD}${C_WHITE}%s${C_RESET} ${C_CYAN}" "$title"
+    _make_hline "$dash_len"
+    printf "${C_BOLD}${C_CYAN}%s${C_RESET}\n" "${BOX_TR}"
+}
+
+_print_section_footer() {
+    local tw
+    tw=$(get_term_width)
+    local inner=$(( tw - 4 ))
+    printf "  ${C_CYAN}%s${C_RESET}" "${BOX_BL}"
+    _make_hline "$inner"
+    printf "${C_CYAN}%s${C_RESET}\n" "${BOX_BR}"
+}
+
+_print_kv() {
+    local key=$1 val=$2 color=${3:-$C_WHITE}
+    printf "  ${C_BOLD}${C_GREY}│${C_RESET}  %-22s ${C_GREY}:${C_RESET} ${color}%s${C_RESET}\n" "$key" "$val"
+}
+
+_print_kv_r() {
+    local key=$1 val=$2 color=${3:-$C_WHITE}
+    printf "  ${C_BOLD}${C_GREY}│${C_RESET}  %-22s ${C_GREY}:${C_RESET} ${color}%s${C_RESET}\n" "$key" "$val"
+}
+
+_print_kv_b() {
+    local key=$1 val=$2
+    printf "  ${C_BOLD}${C_GREY}│${C_RESET}  ${C_BOLD}%-22s${C_RESET} ${C_GREY}:${C_RESET} ${C_BOLD}${C_GREEN}%s${C_RESET}\n" "$key" "$val"
+}
+
+_print_line() {
+    printf "  ${C_BOLD}${C_GREY}│${C_RESET}  %s\n" "$1"
+}
+
+_print_subheader() {
+    printf "  ${C_BOLD}${C_GREY}│${C_RESET}  ${C_BOLD}${C_MAGENTA}%s${C_RESET}\n" "$1"
+}
+
+_print_empty() {
+    printf "  ${C_BOLD}${C_GREY}│${C_RESET}\n"
+}
+
+_print_info_box() {
+    local msg=$1
+    local tw
+    tw=$(get_term_width)
+    local inner=$(( tw - 8 ))
+    printf "  ${C_YELLOW}%s${C_RESET}" "${BOX_TL}"
+    _make_hline "$inner"
+    printf "${C_YELLOW}%s${C_RESET}\n" "${BOX_TR}"
+    printf "  ${C_YELLOW}│${C_RESET}  ${C_YELLOW}%s${C_RESET}\n" "$msg"
+    printf "  ${C_YELLOW}%s${C_RESET}" "${BOX_BL}"
+    _make_hline "$inner"
+    printf "${C_YELLOW}%s${C_RESET}\n" "${BOX_BR}"
+}
+
+# =============================================================================
+#  SYSTEM INFORMATION
+# =============================================================================
 
 gather_system_info() {
-  log_info "Gathering system information..."
+    _info "Gathering system information..."
 
-  SYS_HOSTNAME=$(hostname 2>/dev/null || cat /proc/sys/kernel/hostname 2>/dev/null || echo "unknown")
+    HABS_SYSINFO[hostname]=$(hostname 2>/dev/null || echo 'unknown')
+    HABS_SYSINFO[os]="$( (lsb_release -ds 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i '^pretty_name=' | cut -d= -f2 | tr -d '"' || echo 'unknown') )"
+    HABS_SYSINFO[kernel]=$(uname -r)
+    HABS_SYSINFO[arch]=$(get_arch)
+    HABS_SYSINFO[uptime_seconds]=$(cat /proc/uptime 2>/dev/null | awk '{print int($1)}' || echo 0)
 
-  if [ -f /etc/os-release ]; then
-    SYS_OS=$(sed -n 's/^PRETTY_NAME="\(.*\)"/\1/p' /etc/os-release 2>/dev/null)
-    [ -z "$SYS_OS" ] && SYS_OS=$(sed -n 's/^PRETTY_NAME=\(.*\)/\1/p' /etc/os-release 2>/dev/null)
-  fi
-  [ -z "$SYS_OS" ] && SYS_OS="Unknown"
+    # Virtualization detection
+    local virt=''
+    if check_command systemd-detect-virt; then
+        virt=$(systemd-detect-virt 2>/dev/null || echo 'none')
+    elif [[ -f /sys/devices/virtual/misc/kvm ]]; then
+        virt='kvm'
+    elif [[ -f /proc/xen/capabilities ]]; then
+        virt='xen'
+    elif grep -qi 'container' /proc/1/cgroup 2>/dev/null; then
+        virt='container'
+    else
+        virt='none'
+    fi
+    HABS_SYSINFO[virtualization]="$virt"
 
-  SYS_KERNEL=$(uname -r)
-  SYS_ARCH=$(uname -m)
+    # CPU info
+    if [[ -f /proc/cpuinfo ]]; then
+        HABS_SYSINFO[cpu_model]=$(grep -m1 'model name' /proc/cpuinfo | sed 's/.*:\s*//' | xargs)
+        [[ -z "${HABS_SYSINFO[cpu_model]}" ]] && HABS_SYSINFO[cpu_model]=$(grep -m1 'Processor' /proc/cpuinfo | sed 's/.*:\s*//' | xargs) || true
+        [[ -z "${HABS_SYSINFO[cpu_model]}" ]] && HABS_SYSINFO[cpu_model]='unknown'
+        HABS_SYSINFO[cpu_cores]=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo || echo 1)
+        HABS_SYSINFO[cpu_physical]=$(grep 'physical id' /proc/cpuinfo | sort -u | wc -l)
+        [[ ${HABS_SYSINFO[cpu_physical]} -eq 0 ]] && HABS_SYSINFO[cpu_physical]=${HABS_SYSINFO[cpu_cores]}
 
-  if [ -f /proc/uptime ]; then
-    local up=$(awk '{print int($1)}' /proc/uptime 2>/dev/null)
-    SYS_UPTIME=$(format_duration "$up")
-  fi
-
-  if [ -f /proc/cpuinfo ]; then
-    SYS_CPU_MODEL=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | xargs)
-    [ -z "$SYS_CPU_MODEL" ] && SYS_CPU_MODEL=$(grep -m1 'Processor' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | xargs)
-    [ -z "$SYS_CPU_MODEL" ] && SYS_CPU_MODEL="Unknown"
-
-    SYS_CPU_THREADS=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 1)
-    SYS_CPU_CORES=$SYS_CPU_THREADS
-
-    if command_exists lscpu; then
-      local lscpu_out
-      lscpu_out=$(lscpu 2>/dev/null) || true
-      if [ -n "$lscpu_out" ]; then
-        local cores
-        cores=$(echo "$lscpu_out" | awk -F: '/^CPU\(s\):/ {gsub(/ /,"",$2); print $2}')
-        [ -n "$cores" ] && SYS_CPU_CORES=$cores
-
-        local freq
-        freq=$(echo "$lscpu_out" | awk -F: '/MHz/ {gsub(/ /,"",$2); print $2; exit}')
-        if [ -n "$freq" ]; then
-          SYS_CPU_FREQ=$(awk "BEGIN {printf \"%.2f GHz\", $freq/1000}" 2>/dev/null || echo "")
+        local cpu_mhz
+        cpu_mhz=$(grep -m1 'cpu MHz' /proc/cpuinfo | sed 's/.*:\s*//' | xargs)
+        if [[ -n "$cpu_mhz" ]]; then
+            HABS_SYSINFO[cpu_freq]=$(echo "scale=2; $cpu_mhz / 1000" | bc -l 2>/dev/null || echo "$cpu_mhz")
         else
-          local max_freq
-          max_freq=$(echo "$lscpu_out" | awk -F: '/max MHz/ {gsub(/ /,"",$2); print $2}')
-          [ -n "$max_freq" ] && SYS_CPU_FREQ=$(awk "BEGIN {printf \"%.2f GHz\", $max_freq/1000}" 2>/dev/null || echo "")
+            HABS_SYSINFO[cpu_freq]='N/A'
         fi
 
-        SYS_CPU_CACHE=$(echo "$lscpu_out" | awk -F: '/^L[1-3][di]? cache:/ {gsub(/^ */,"",$1); gsub(/^ /,"",$2); printf "%s: %s, ", $1, $2}' | sed 's/, $//') || true
-        SYS_CPU_FLAGS=$(echo "$lscpu_out" | awk -F: '/^[Ff]lags/ {print $2}' | xargs) || true
-      fi
+        # Cache info
+        HABS_SYSINFO[cpu_cache_l1d]=$(grep -m1 'cache size' /proc/cpuinfo | sed 's/.*:\s*//' | xargs)
+        if [[ -z "${HABS_SYSINFO[cpu_cache_l1d]}" ]] && [[ -d /sys/devices/system/cpu/cpu0/cache ]]; then
+            for dir in /sys/devices/system/cpu/cpu0/cache/index*; do
+                local type
+                type=$(cat "$dir/type" 2>/dev/null || true)
+                local size
+                size=$(cat "$dir/size" 2>/dev/null || true)
+                case $type in
+                    Data)  HABS_SYSINFO[cpu_cache_l1d]="${size}B" ;;
+                    Instruction) HABS_SYSINFO[cpu_cache_l1i]="${size}B" ;;
+                    Unified)
+                        local level
+                        level=$(cat "$dir/level" 2>/dev/null || true)
+                        case $level in
+                            2) HABS_SYSINFO[cpu_cache_l2]="${size}B" ;;
+                            3) HABS_SYSINFO[cpu_cache_l3]="${size}B" ;;
+                        esac
+                    ;;
+                esac
+            done
+        fi
+
+        # CPU flags (truncated for display but stored fully)
+        HABS_SYSINFO[cpu_flags_full]=$(grep -m1 'flags' /proc/cpuinfo | sed 's/.*:\s*//' || true)
+        local flags="${HABS_SYSINFO[cpu_flags_full]}"
+        HABS_SYSINFO[has_aes]=0; HABS_SYSINFO[has_avx]=0; HABS_SYSINFO[has_avx2]=0; HABS_SYSINFO[has_avx512]=0
+        HABS_SYSINFO[has_sse4_2]=0; HABS_SYSINFO[has_neon]=0; HABS_SYSINFO[has_sve]=0
+        [[ $flags == *' aes '* ]] && HABS_SYSINFO[has_aes]=1
+        [[ $flags == *' avx '* ]] && HABS_SYSINFO[has_avx]=1
+        [[ $flags == *' avx2 '* ]] && HABS_SYSINFO[has_avx2]=1
+        [[ $flags == *' avx512'* ]] && HABS_SYSINFO[has_avx512]=1
+        [[ $flags == *' sse4_2 '* ]] && HABS_SYSINFO[has_sse4_2]=1
+        [[ $flags == *' neon '* ]] && HABS_SYSINFO[has_neon]=1
+        [[ $flags == *' sve '* ]] && HABS_SYSINFO[has_sve]=1
     fi
 
-    [ -z "$SYS_CPU_FREQ" ] && SYS_CPU_FREQ=$(awk '/cpu MHz/ {printf "%.2f GHz", $NF/1000; exit}' /proc/cpuinfo 2>/dev/null || echo "N/A")
-    [ -z "$SYS_CPU_FREQ" ] && SYS_CPU_FREQ="N/A"
-    [ -z "$SYS_CPU_FLAGS" ] && SYS_CPU_FLAGS=$(grep -m1 'flags\|Features' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | xargs || echo "")
-  fi
-
-  if [ -f /proc/meminfo ]; then
-    local mem_total mem_avail swap_total
-    mem_total=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo) || true
-    mem_avail=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo) || true
-    swap_total=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo) || true
-
-    : "${mem_total:=0}" "${mem_avail:=0}" "${swap_total:=0}"
-    SYS_RAM_TOTAL=$((mem_total * 1024))
-    SYS_RAM_AVAIL=$((mem_avail * 1024))
-    SYS_RAM_USED=$((SYS_RAM_TOTAL - SYS_RAM_AVAIL))
-    SYS_SWAP_TOTAL=$((swap_total * 1024))
-  fi
-
-  local disk_info
-  disk_info=$(df -h / 2>/dev/null | tail -1) || true
-  if [ -n "$disk_info" ]; then
-    SYS_DISK_TOTAL=$(echo "$disk_info" | awk '{print $2}') || true
-    SYS_DISK_USED=$(echo "$disk_info" | awk '{print $3}') || true
-    SYS_DISK_AVAIL=$(echo "$disk_info" | awk '{print $4}') || true
-    SYS_DISK_PCT=$(echo "$disk_info" | awk '{print $5}') || true
-    SYS_DISK_MOUNT=$(echo "$disk_info" | awk '{print $6}') || true
-    SYS_DISK_FSTYPE=$(df -T / 2>/dev/null | tail -1 | awk '{print $2}') || true
-  fi
-
-  if command_exists systemd-detect-virt; then
-    SYS_VIRT=$(systemd-detect-virt 2>/dev/null || echo "none")
-  elif command_exists hostnamectl; then
-    SYS_VIRT=$(hostnamectl 2>/dev/null | awk -F: '/Virtualization/ {gsub(/^ /,"",$2); print $2}') || true
-    [ -z "$SYS_VIRT" ] && SYS_VIRT="none"
-  else
-    SYS_VIRT="none/detect"
-  fi
-
-  if [ -f /proc/cpuinfo ]; then
-    SYS_AES=$(grep -q 'aes' /proc/cpuinfo 2>/dev/null && echo "Enabled" || echo "Disabled")
-    SYS_VMX=$(grep -q 'vmx\|svm' /proc/cpuinfo 2>/dev/null && echo "Enabled" || echo "Disabled")
-  fi
-
-  if [ -f /proc/loadavg ]; then
-    SYS_LOAD=$(awk '{print $1 ", " $2 ", " $3}' /proc/loadavg) || true
-  fi
-
-  # IPv4/IPv6 connectivity check
-  if command_exists ping; then
-    ping -4 -c 1 -W 2 1.1.1.1 >/dev/null 2>&1 && SYS_IPV4=true || SYS_IPV4=false
-    ping -6 -c 1 -W 2 2001:4860:4860::8888 >/dev/null 2>&1 && SYS_IPV6=true || SYS_IPV6=false
-  fi
-
-  # Network info via ip-api.com (non-blocking, short timeout)
-  if command_exists curl && [ "$SYS_IPV4" = true ]; then
-    local ip_info
-    ip_info=$(curl -s --max-time 3 http://ip-api.com/json/ 2>/dev/null) || true
-    if [ -n "$ip_info" ]; then
-      SYS_ISP=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('isp','?'))" 2>/dev/null || echo "")
-      SYS_ASN=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('as','?'))" 2>/dev/null || echo "")
-      SYS_ORG=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('org','?'))" 2>/dev/null || echo "")
-      [ -z "$SYS_ORG" ] && SYS_ORG=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('org','?'))" 2>/dev/null || echo "")
-      SYS_COUNTRY=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('country','?'))" 2>/dev/null || echo "")
-      local city region
-      city=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('city',''))" 2>/dev/null || echo "")
-      region=$(echo "$ip_info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('regionName',''))" 2>/dev/null || echo "")
-      [ -n "$city" ] && [ -n "$region" ] && SYS_LOCATION="${city}, ${region}" || SYS_LOCATION="$city$region"
+    # Memory info
+    if [[ -f /proc/meminfo ]]; then
+        local mem_total=$(grep '^MemTotal:' /proc/meminfo | awk '{print $2}')
+        local mem_avail=$(grep '^MemAvailable:' /proc/meminfo | awk '{print $2}')
+        local swap_total=$(grep '^SwapTotal:' /proc/meminfo | awk '{print $2}')
+        local swap_free=$(grep '^SwapFree:' /proc/meminfo | awk '{print $2}')
+        HABS_SYSINFO[ram_total]=$((mem_total * 1024))
+        HABS_SYSINFO[ram_available]=$((mem_avail * 1024))
+        HABS_SYSINFO[ram_used]=$(( (mem_total - mem_avail) * 1024 ))
+        HABS_SYSINFO[swap_total]=$((swap_total * 1024))
+        HABS_SYSINFO[swap_free]=$((swap_free * 1024))
+        HABS_SYSINFO[swap_used]=$(( (swap_total - swap_free) * 1024 ))
     fi
-  fi
 
-  log_success "System information gathered"
+    # Disk info (root partition)
+    if check_command df; then
+        HABS_SYSINFO[disk_total]=$(df --block-size=1 / 2>/dev/null | awk 'NR==2 {print $2}' || df -P / 2>/dev/null | awk 'NR==2 {print $2*1024}')
+        HABS_SYSINFO[disk_used]=$(df --block-size=1 / 2>/dev/null | awk 'NR==2 {print $3}' || df -P / 2>/dev/null | awk 'NR==2 {print $3*1024}')
+        HABS_SYSINFO[disk_avail]=$(df --block-size=1 / 2>/dev/null | awk 'NR==2 {print $4}' || df -P / 2>/dev/null | awk 'NR==2 {print $4*1024}')
+        HABS_SYSINFO[disk_usage_pct]=$(df / 2>/dev/null | awk 'NR==2 {print $5}' | tr -d '%' || echo 0)
+    fi
+
+    # Filesystem type
+    HABS_SYSINFO[filesystem]=$(df -T / 2>/dev/null | awk 'NR==2 {print $2}' || echo 'unknown')
+    HABS_SYSINFO[mount_options]=$(grep ' / ' /proc/mounts 2>/dev/null | awk '{print $4}' || echo 'unknown')
+
+    # Load average
+    if [[ -f /proc/loadavg ]]; then
+        read -r l1 l2 l3 _ < /proc/loadavg
+        HABS_SYSINFO[load_1]="$l1"
+        HABS_SYSINFO[load_5]="$l2"
+        HABS_SYSINFO[load_15]="$l3"
+    fi
+
+    # Network interfaces
+    HABS_SYSINFO[ipv4]=''
+    HABS_SYSINFO[ipv6]=''
+    if check_command ip; then
+        HABS_SYSINFO[ipv4]=$(ip -4 addr show scope global 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1 || echo '')
+        HABS_SYSINFO[ipv6]=$(ip -6 addr show scope global 2>/dev/null | grep -oP 'inet6 \K[0-9a-f:]+' | head -1 || echo '')
+        HABS_SYSINFO[interfaces]=$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | paste -sd ',' || echo 'lo')
+    fi
+
+    # CPU feature strings for display
+    local features=''
+    [[ ${HABS_SYSINFO[has_aes]} -eq 1 ]] && features+=' AES'
+    [[ ${HABS_SYSINFO[has_avx]} -eq 1 ]] && features+=' AVX'
+    [[ ${HABS_SYSINFO[has_avx2]} -eq 1 ]] && features+=' AVX2'
+    [[ ${HABS_SYSINFO[has_avx512]} -eq 1 ]] && features+=' AVX-512'
+    [[ ${HABS_SYSINFO[has_sse4_2]} -eq 1 ]] && features+=' SSE4.2'
+    [[ ${HABS_SYSINFO[has_neon]} -eq 1 ]] && features+=' NEON'
+    [[ ${HABS_SYSINFO[has_sve]} -eq 1 ]] && features+=' SVE'
+    features=$(echo "$features" | xargs)
+    [[ -z "$features" ]] && features='N/A'
+    HABS_SYSINFO[cpu_features_str]="$features"
 }
 
-print_system_info() {
-  section_start "System Information"
-  info_row "Hostname"       "${SYS_HOSTNAME}"
-  info_row "OS"             "${SYS_OS} (${SYS_ARCH})"
-  info_row "Kernel"         "${SYS_KERNEL}"
-  info_row "Uptime"         "${SYS_UPTIME}"
-  info_row "CPU Model"      "${SYS_CPU_MODEL}"
-  info_row "CPU Cores"      "${SYS_CPU_CORES} cores / ${SYS_CPU_THREADS} threads"
-  info_row "CPU Freq"       "${SYS_CPU_FREQ}"
-  if [ -n "$SYS_CPU_CACHE" ]; then
-    IFS=',' read -ra cache_lines <<< "$SYS_CPU_CACHE"
-    for cl in "${cache_lines[@]}"; do
-      cl=$(echo "$cl" | xargs)
-      case "$cl" in
-        L1d*)   info_row "L1d Cache"  "${cl#L1d cache: }" ;;
-        L1i*)   info_row "L1i Cache"  "${cl#L1i cache: }" ;;
-        L2*)    info_row "L2 Cache"   "${cl#L2 cache: }" ;;
-        L3*)    info_row "L3 Cache"   "${cl#L3 cache: }" ;;
-      esac
-    done
-  fi
-  local ram_pct=0
-  [ "$SYS_RAM_TOTAL" -gt 0 ] && ram_pct=$(( SYS_RAM_USED * 100 / SYS_RAM_TOTAL ))
-  info_row "RAM"            "$(format_bytes $SYS_RAM_USED) used / $(format_bytes $SYS_RAM_TOTAL) total (${ram_pct}%)"
-  info_row "Swap"           "$(format_bytes $SYS_SWAP_TOTAL) total"
-  info_row "Disk"           "${SYS_DISK_USED} used / ${SYS_DISK_TOTAL} total (${SYS_DISK_PCT})"
-  info_row "Filesystem"     "${SYS_DISK_FSTYPE} on ${SYS_DISK_MOUNT}"
-  info_row "Virt"           "${SYS_VIRT}"
-  info_row "AES-NI"         "${SYS_AES}"
-  info_row "VM-x/AMD-V"     "${SYS_VMX}"
-  info_row "Load Avg"       "${SYS_LOAD}"
-  if [ -n "$SYS_ISP" ]; then
-    info_row "ISP"           "${SYS_ISP}"
-    [ -n "$SYS_ASN" ] && info_row "ASN"   "${SYS_ASN}"
-    [ -n "$SYS_LOCATION" ] && info_row "Location" "${SYS_LOCATION}"
-  fi
-  local ipv4_status="${SYS_IPV4}"
-  local ipv6_status="${SYS_IPV6}"
-  [ "$SYS_IPV4" = true ] && ipv4_status="Online" || ipv4_status="Offline"
-  [ "$SYS_IPV6" = true ] && ipv6_status="Online" || ipv6_status="Offline"
-  info_row "IPv4/IPv6"      "${ipv4_status} / ${ipv6_status}"
-  section_end
+display_system_info() {
+    _print_section_header 'System Information'
+
+    _print_kv 'Hostname'         "${HABS_SYSINFO[hostname]}"
+    _print_kv 'OS'               "${HABS_SYSINFO[os]}"
+    _print_kv 'Kernel'           "${HABS_SYSINFO[kernel]}"
+    _print_kv 'Architecture'     "${HABS_SYSINFO[arch]}"
+    _print_kv 'Virtualization'   "${HABS_SYSINFO[virtualization]}"
+    _print_kv 'Uptime'           "$(fmt_duration ${HABS_SYSINFO[uptime_seconds]})"
+
+    _print_empty
+    _print_subheader "CPU"
+    _print_kv 'Model'            "${HABS_SYSINFO[cpu_model]}"
+    _print_kv 'Cores'            "${HABS_SYSINFO[cpu_physical]} physical / ${HABS_SYSINFO[cpu_cores]} logical"
+    _print_kv 'Frequency'        "${HABS_SYSINFO[cpu_freq]} GHz (reported)"
+    _print_kv 'L1d Cache'        "${HABS_SYSINFO[cpu_cache_l1d]:-N/A}"
+    _print_kv 'L2 Cache'         "${HABS_SYSINFO[cpu_cache_l2]:-N/A}"
+    _print_kv 'L3 Cache'         "${HABS_SYSINFO[cpu_cache_l3]:-N/A}"
+    _print_kv 'Features'         "${HABS_SYSINFO[cpu_features_str]}"
+
+    _print_empty
+    _print_subheader "Memory"
+    _print_kv 'RAM'              "$(fmt_bytes ${HABS_SYSINFO[ram_total]}) total / $(fmt_bytes ${HABS_SYSINFO[ram_used]}) used ($(fmt_bytes ${HABS_SYSINFO[ram_available]}) avail)"
+    _print_kv 'Swap'             "$(fmt_bytes ${HABS_SYSINFO[swap_total]}) total / $(fmt_bytes ${HABS_SYSINFO[swap_used]}) used"
+
+    _print_empty
+    _print_subheader "Storage"
+    _print_kv 'Root Mount'       "${HABS_SYSINFO[filesystem]} (${HABS_SYSINFO[mount_options]})"
+    _print_kv 'Usage'            "$(fmt_bytes ${HABS_SYSINFO[disk_total]}) total / $(fmt_bytes ${HABS_SYSINFO[disk_used]}) used (${HABS_SYSINFO[disk_usage_pct]}%)"
+
+    _print_empty
+    _print_subheader "Network"
+    _print_kv 'IPv4'             "${HABS_SYSINFO[ipv4]:-N/A}"
+    _print_kv 'IPv6'             "${HABS_SYSINFO[ipv6]:-N/A}"
+    _print_kv 'Interfaces'       "${HABS_SYSINFO[interfaces]:-N/A}"
+
+    _print_empty
+    _print_subheader "Load"
+    _print_kv 'Load Average'     "${HABS_SYSINFO[load_1]:-0.00} / ${HABS_SYSINFO[load_5]:-0.00} / ${HABS_SYSINFO[load_15]:-0.00}  (1m / 5m / 15m)"
+
+    _print_section_footer
 }
 
-# ============================================================
-# CPU BENCHMARK (Standard)
-# ============================================================
+# =============================================================================
+#  BENCHMARK: CPU (sysbench)
+# =============================================================================
 
 bench_cpu() {
-  section_start "CPU Benchmark"
+    _info "Running CPU benchmark (sysbench)..."
 
-  echo -e "  ${C_YELLOW}Running CPU benchmark. Tests run at reduced priority (nice -n 19).${C_RESET}"
+    _print_section_header 'CPU Benchmark (sysbench)'
 
-  ensure_sysbench || { section_end; return 1; }
+    ensure_command sysbench sysbench || { _print_line 'sysbench not available'; _print_section_footer; return 1; }
 
-  local cpu_time=6
-  local max_prime=15000
-  [ "$CONFIG_QUICK" = true ] && cpu_time=3 && max_prime=10000
-  [ "$CONFIG_FULL" = true ] && cpu_time=12 && max_prime=30000
-
-  echo -e "  ${C_BOLD}Single-core test (${cpu_time}s)...${C_RESET}"
-  local single_out
-  single_out=$(nice -n 19 sysbench cpu --cpu-max-prime="$max_prime" --threads=1 --time="$cpu_time" run 2>/dev/null)
-  RESULT_CPU_SINGLE=$(echo "$single_out" | sed -n 's/.*events per second:\s*\([0-9.]*\).*/\1/p')
-  [ -z "$RESULT_CPU_SINGLE" ] && RESULT_CPU_SINGLE=0
-  echo -e "  ${C_GREEN}✓${C_RESET} Single-core:  ${C_BOLD}$(printf "%'.0f" "$RESULT_CPU_SINGLE" 2>/dev/null || echo "$RESULT_CPU_SINGLE")${C_RESET} events/s"
-
-  echo -e "  ${C_BOLD}Multi-core test (${SYS_CPU_THREADS} cores, ${cpu_time}s)...${C_RESET}"
-  local multi_out
-  multi_out=$(nice -n 19 sysbench cpu --cpu-max-prime="$max_prime" --threads="$SYS_CPU_THREADS" --time="$cpu_time" run 2>/dev/null)
-  RESULT_CPU_MULTI=$(echo "$multi_out" | sed -n 's/.*events per second:\s*\([0-9.]*\).*/\1/p')
-  [ -z "$RESULT_CPU_MULTI" ] && RESULT_CPU_MULTI=0
-
-  echo -e "  ${C_GREEN}✓${C_RESET} Multi-core:   ${C_BOLD}$(printf "%'.0f" "$RESULT_CPU_MULTI" 2>/dev/null || echo "$RESULT_CPU_MULTI")${C_RESET} events/s"
-
-  if [ "$(awk "BEGIN {print ($RESULT_CPU_SINGLE > 0)}")" -eq 1 ]; then
-    local ratio
-    ratio=$(awk "BEGIN {printf \"%.2f\", $RESULT_CPU_MULTI / $RESULT_CPU_SINGLE}" 2>/dev/null)
-    echo -e "  ${C_DIM}  Scaling:     ${ratio}x (ideal: ${SYS_CPU_THREADS}x)${C_RESET}"
-  fi
-
-  section_end
-}
-
-# ============================================================
-# GEEKBENCH 6
-# ============================================================
-
-bench_geekbench() {
-  section_start "Geekbench 6"
-
-  local gb_url="https://cdn.geekbench.com/Geekbench-6.7.1-Linux.tar.gz"
-  local gb_tar="/tmp/geekbench6.tar.gz"
-  GB_DIR="/tmp/geekbench6-$$"
-
-  if [ -f "$GB_DIR/geekbench6" ]; then
-    log_info "Using cached Geekbench 6 in ${GB_DIR}"
-  else
-    echo -e "  ${C_BOLD}Checking internet connectivity...${C_RESET}"
-    if command_exists curl; then
-      curl -sI --max-time 5 "https://cdn.geekbench.com" >/dev/null 2>&1 || {
-        echo -e "  ${C_YELLOW}Cannot reach Geekbench CDN. Skipping.${C_RESET}"
-        section_end
-        return 1
-      }
+    local max_prime
+    local nproc
+    nproc=${HABS_SYSINFO[cpu_cores]:-$(nproc)}
+    [[ $nproc -lt 1 ]] && nproc=1
+    if [[ $HABS_QUICK -eq 1 ]]; then
+        max_prime=10000
+    elif [[ $HABS_FULL -eq 1 ]]; then
+        max_prime=50000
+    else
+        max_prime=20000
     fi
-    echo -e "  ${C_BOLD}Downloading Geekbench 6 (~100 MB)...${C_RESET}"
-    if ! download_url "$gb_url" "$gb_tar" 120; then
-      echo -e "  ${C_RED}Failed to download Geekbench 6. Check internet connection.${C_RESET}"
-      section_end
-      return 1
+
+    local single_result='' multi_result=''
+
+    # Single-threaded
+    _spinner_start "CPU Single-threaded (prime ${max_prime}) ..."
+    single_result=$(run_with_timeout 180 sysbench cpu --cpu-max-prime="$max_prime" --threads=1 run 2>/dev/null)
+    _spinner_stop
+
+    local single_eps
+    single_eps=$(echo "$single_result" | grep 'events per second:' | grep -oP '\d+\.?\d*' | head -1 || echo '0')
+    [[ -z "$single_eps" ]] && single_eps=0
+
+    _ok "Single-threaded:  ${single_eps} events/s"
+
+    # Multi-threaded
+    _spinner_start "CPU Multi-threaded (${nproc} threads, prime ${max_prime}) ..."
+    multi_result=$(run_with_timeout 300 sysbench cpu --cpu-max-prime="$max_prime" --threads="$nproc" run 2>/dev/null)
+    _spinner_stop
+
+    local multi_eps
+    multi_eps=$(echo "$multi_result" | grep 'events per second:' | grep -oP '\d+\.?\d*' | head -1 || echo '0')
+    [[ -z "$multi_eps" ]] && multi_eps=0
+
+    _ok "Multi-threaded:   ${multi_eps} events/s"
+
+    # Scaling ratio
+    local scaling=0
+    if [[ $(echo "$single_eps > 0" | bc -l 2>/dev/null) == 1 ]]; then
+        scaling=$(echo "scale=2; $multi_eps / $single_eps" | bc -l 2>/dev/null || echo 0)
     fi
-    echo -e "  ${C_GREEN}Downloaded. Extracting...${C_RESET}"
-    mkdir -p "$GB_DIR"
-    tar -xzf "$gb_tar" -C "$GB_DIR" --strip-components=1 2>/dev/null || {
-      echo -e "  ${C_RED}Failed to extract Geekbench 6.${C_RESET}"
-      rm -rf "$GB_DIR" 2>/dev/null || true
-      section_end
-      return 1
-    }
-    rm -f "$gb_tar"
-  fi
 
-  local gb_bin="$GB_DIR/geekbench6"
-  if [ ! -x "$gb_bin" ]; then
-    echo -e "  ${C_RED}Geekbench 6 binary not found.${C_RESET}"
-    section_end
-    return 1
-  fi
+    local ideal_scaling=$nproc
+    _print_empty
+    _print_kv_b 'Scaling Ratio'     "${scaling}x (ideal: ${ideal_scaling}x)"
 
-  echo -e "  ${C_BOLD}Running Geekbench 6 (this takes 5-10 minutes)...${C_RESET}"
-  echo -e "  ${C_DIM}Geekbench measures AES, LZMA, JPEG, HTML5, SQLite, and more${C_RESET}"
+    _print_section_footer
 
-  local gb_out
-  gb_out=$("$gb_bin" --json --no-upload 2>/dev/null) || true
-  local gb_exit=$?
-
-  if [ "$gb_exit" -ne 0 ] || [ -z "$gb_out" ]; then
-    echo -e "  ${C_RED}Geekbench 6 failed with exit code ${gb_exit}${C_RESET}"
-    section_end
-    return 1
-  fi
-
-  RESULT_GB_SINGLE=$(echo "$gb_out" | grep -o '"single": [0-9]*' | grep -o '[0-9]*' | head -1)
-  RESULT_GB_MULTI=$(echo "$gb_out" | grep -o '"multi": [0-9]*' | grep -o '[0-9]*' | head -1)
-
-  if [ -z "$RESULT_GB_SINGLE" ]; then
-    local gb_json_file
-    gb_json_file=$(find "$GB_DIR" -name "*.json" -newer "$gb_bin" 2>/dev/null | head -1)
-    if [ -n "$gb_json_file" ]; then
-      RESULT_GB_SINGLE=$(grep -o '"single_score": [0-9]*' "$gb_json_file" 2>/dev/null | grep -o '[0-9]*' | head -1)
-      RESULT_GB_MULTI=$(grep -o '"multi_score": [0-9]*' "$gb_json_file" 2>/dev/null | grep -o '[0-9]*' | head -1)
-    fi
-  fi
-
-  [ -z "$RESULT_GB_SINGLE" ] && RESULT_GB_SINGLE=0
-  [ -z "$RESULT_GB_MULTI" ] && RESULT_GB_MULTI=0
-
-  echo -e "  ${C_GREEN}✓${C_RESET} Single-Core: ${C_BOLD}${RESULT_GB_SINGLE}${C_RESET}"
-  echo -e "  ${C_GREEN}✓${C_RESET} Multi-Core:  ${C_BOLD}${RESULT_GB_MULTI}${C_RESET}"
-
-  section_end
-  log_success "Geekbench 6 complete"
+    HABS_RESULTS[cpu_single_eps]=$single_eps
+    HABS_RESULTS[cpu_multi_eps]=$multi_eps
+    HABS_RESULTS[cpu_scaling]=$scaling
+    HABS_RESULTS[cpu_threads]=$nproc
+    HABS_RESULTS[cpu_max_prime]=$max_prime
 }
 
-# ============================================================
-# ADVANCED CPU (stress-ng)
-# ============================================================
-
-bench_advanced_cpu() {
-  section_start "Advanced CPU (stress-ng)"
-
-  if ! ensure_stress_ng; then
-    section_end
-    return 1
-  fi
-
-  local duration=20
-  [ "$CONFIG_QUICK" = true ] && duration=10
-  [ "$CONFIG_FULL" = true ] && duration=30
-
-  echo -e "  ${C_BOLD}Matrix multiplication test (${duration}s)...${C_RESET}"
-  local matrix_out
-  matrix_out=$(stress-ng --matrix 0 --matrix-size 256 -t "$duration" --metrics-brief 2>&1) || true
-  RESULT_ADV_CPU_MATRIX=$(echo "$matrix_out" | awk '/matrix/ {for(i=1;i<=NF;i++) if($i~/^[0-9.]+$/) {print $i; exit}}')
-  [ -z "$RESULT_ADV_CPU_MATRIX" ] && RESULT_ADV_CPU_MATRIX=0
-  echo -e "  ${C_GREEN}✓${C_RESET} Matrix:  ${C_BOLD}${RESULT_ADV_CPU_MATRIX}${C_RESET} bogo ops/s"
-
-  echo -e "  ${C_BOLD}FPU test (${duration}s)...${C_RESET}"
-  local fpu_out
-  fpu_out=$(stress-ng --fpu 0 -t "$duration" --metrics-brief 2>&1) || true
-  RESULT_ADV_CPU_FPU=$(echo "$fpu_out" | awk '/fpu/ {for(i=1;i<=NF;i++) if($i~/^[0-9.]+$/) {print $i; exit}}')
-  [ -z "$RESULT_ADV_CPU_FPU" ] && RESULT_ADV_CPU_FPU=0
-  echo -e "  ${C_GREEN}✓${C_RESET} FPU:     ${C_BOLD}${RESULT_ADV_CPU_FPU}${C_RESET} bogo ops/s"
-
-  echo -e "  ${C_BOLD}Crypto operations test (${duration}s)...${C_RESET}"
-  local crypt_out
-  crypt_out=$(stress-ng --crypt 0 -t "$duration" --metrics-brief 2>&1) || true
-  RESULT_ADV_CPU_CRYPT=$(echo "$crypt_out" | awk '/crypt/ {for(i=1;i<=NF;i++) if($i~/^[0-9.]+$/) {print $i; exit}}')
-  [ -z "$RESULT_ADV_CPU_CRYPT" ] && RESULT_ADV_CPU_CRYPT=0
-  echo -e "  ${C_GREEN}✓${C_RESET} Crypto:  ${C_BOLD}${RESULT_ADV_CPU_CRYPT}${C_RESET} bogo ops/s"
-
-  echo -e "  ${C_BOLD}Cache thrash test (${duration}s)...${C_RESET}"
-  local cache_out
-  cache_out=$(stress-ng --cache 0 -t "$duration" --metrics-brief 2>&1) || true
-  RESULT_ADV_CPU_CACHE=$(echo "$cache_out" | awk '/cache/ {for(i=1;i<=NF;i++) if($i~/^[0-9.]+$/) {print $i; exit}}')
-  [ -z "$RESULT_ADV_CPU_CACHE" ] && RESULT_ADV_CPU_CACHE=0
-  echo -e "  ${C_GREEN}✓${C_RESET} Cache:   ${C_BOLD}${RESULT_ADV_CPU_CACHE}${C_RESET} bogo ops/s"
-
-  section_end
-}
-
-# ============================================================
-# ADVANCED MEMORY (Multi-block & Latency)
-# ============================================================
-
-bench_advanced_memory() {
-  section_start "Advanced Memory"
-
-  if ! ensure_sysbench; then
-    section_end
-    return 1
-  fi
-
-  local mem_total="4G"
-  [ "$CONFIG_QUICK" = true ] && mem_total="1G"
-  [ "$CONFIG_FULL" = true ] && mem_total="8G"
-
-  echo -e "  ${C_BOLD}Multi-block-size memory test...${C_RESET}"
-
-  for blk in "256B" "4K" "64K" "1M"; do
-    local bs_var
-    bs_var=$(echo "$blk" | sed 's/B//')
-    local out
-    out=$(sysbench memory --memory-block-size="$blk" --memory-total-size="$mem_total" --memory-oper=read run 2>/dev/null)
-    local speed
-    speed=$(echo "$out" | sed -n 's/.*(\([0-9.]*\) MiB\/sec).*/\1/p')
-    [ -z "$speed" ] && speed=0
-
-    case "$blk" in
-      "256B") RESULT_ADV_MEM_256B=$speed ;;
-      "4K")   RESULT_ADV_MEM_4K=$speed ;;
-      "64K")  RESULT_ADV_MEM_64K=$speed ;;
-      "1M")   RESULT_ADV_MEM_1M=$speed ;;
-    esac
-    echo -e "  ${C_GREEN}✓${C_RESET} ${blk} Read: ${C_BOLD}${speed}${C_RESET} MiB/s"
-  done
-
-  # Memory latency using sysbench
-  if command_exists lscpu; then
-    echo -e "  ${C_BOLD}Memory latency estimation...${C_RESET}"
-    local latency_ns="N/A"
-    local l1_size l2_size l3_size
-    l1_size=$(lscpu 2>/dev/null | awk -F: '/L1d/ {print $2}' | awk '{print $1}')
-    l2_size=$(lscpu 2>/dev/null | awk -F: '/L2/ {print $2}' | awk '{print $1}')
-    l3_size=$(lscpu 2>/dev/null | awk -F: '/L3/ {print $2}' | awk '{print $1}')
-
-    RESULT_ADV_MEM_LATENCY=0
-    echo -e "  ${C_GREEN}✓${C_RESET} L1 Cache: ${C_BOLD}${l1_size:-N/A}${C_RESET} | L2: ${l2_size:-N/A} | L3: ${l3_size:-N/A}"
-  fi
-
-  section_end
-}
-
-# ============================================================
-# ADVANCED DISK (ioping only — fio tests in standard disk benchmark)
-# ============================================================
-
-bench_advanced_disk() {
-  section_start "Advanced Disk"
-
-  local temp_dir="${TMPDIR:-/tmp}"
-  [ ! -w "$temp_dir" ] && temp_dir="."
-
-  # Additional SSD-specific tests using fio
-  if command_exists fio && python3 -c "import json" 2>/dev/null; then
-    local fio_file="$temp_dir/habs_adv_disk.$$"
-    TEMP_FILES+=("$fio_file")
-
-    echo -e "  ${C_BOLD}Sequential 1M QD=8 (fio)...${C_RESET}"
-    local out_sq8
-    out_sq8=$(_run_fio_test "seq8" "1M" "read" 8 "1G" "" "$fio_file")
-    local bw_sq8=$(_parse_fio_result "$out_sq8" "bw" "read")
-    bw_sq8=$(awk "BEGIN {printf \"%.0f\", $bw_sq8 / 1000}" 2>/dev/null || echo 0)
-    echo -e "  ${C_GREEN}✓${C_RESET} Seq 1M QD=8: ${C_BOLD}${bw_sq8}${C_RESET} MB/s"
-
-    rm -f "$fio_file"
-
-    # Trim/discard test for SSD
-    if [ -d /sys/block ] && command_exists lsblk; then
-      local rot
-      rot=$(lsblk -d -o ROTA 2>/dev/null | tail -1 | xargs)
-      if [ "$rot" = "0" ]; then
-        echo -e "  ${C_DIM}  SSD detected: trim/discard not tested (non-destructive only)${C_RESET}"
-      fi
-    fi
-  else
-    echo -e "  ${C_DIM}  fio+python3 for extra disk tests${C_RESET}"
-  fi
-
-  section_end
-}
-
-# ============================================================
-# ADVANCED NETWORK (IPv6, packet loss, traceroute)
-# ============================================================
-
-bench_advanced_network() {
-  section_start "Advanced Network"
-
-  if ! command_exists curl; then
-    echo -e "  ${C_YELLOW}curl not found.${C_RESET}"
-    section_end
-    return 1
-  fi
-
-  # IPv6 speed test
-  echo -e "  ${C_BOLD}IPv6 download test...${C_RESET}"
-  local ipv6_url="https://speed.cloudflare.com/__down?bytes=50000000"
-  local ipv6_speed
-  ipv6_speed=$(curl -6 -sL --max-time 10 -o /dev/null -w "%{speed_download}" "$ipv6_url" 2>/dev/null) || ipv6_speed=""
-  if [ -n "$ipv6_speed" ] && [ "$(awk "BEGIN {print ($ipv6_speed > 0)}")" -eq 1 ]; then
-    RESULT_ADV_NET_IPV6=$(awk "BEGIN {printf \"%.2f\", $ipv6_speed * 8 / 1000000}" 2>/dev/null)
-    echo -e "  ${C_GREEN}✓${C_RESET} IPv6: ${C_BOLD}${RESULT_ADV_NET_IPV6}${C_RESET} Mbps"
-  else
-    echo -e "  ${C_YELLOW}  IPv6 not available or slow${C_RESET}"
-    RESULT_ADV_NET_IPV6=0
-  fi
-
-  # Packet loss test
-  echo -e "  ${C_BOLD}Packet loss test...${C_RESET}"
-  local ploss
-  ploss=$(ping -c 10 -W 1 "1.1.1.1" 2>/dev/null | awk '/packet loss/ {print $6}' | sed 's/%//')
-  if [ -n "$ploss" ]; then
-    RESULT_ADV_NET_PLOSS=$ploss
-    echo -e "  ${C_GREEN}✓${C_RESET} Packet loss: ${C_BOLD}${RESULT_ADV_NET_PLOSS}%${C_RESET}"
-  else
-    RESULT_ADV_NET_PLOSS=-1
-    echo -e "  ${C_YELLOW}  Packet loss test failed${C_RESET}"
-  fi
-
-  # Traceroute hop count
-  echo -e "  ${C_BOLD}Traceroute to cloudflare.com...${C_RESET}"
-  local hops=0
-  if command_exists traceroute; then
-    hops=$(traceroute -n -q 1 -w 1 "1.1.1.1" 2>/dev/null | grep -c '[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*' || true)
-  elif command_exists mtr; then
-    hops=$(mtr -r -c 1 -n "1.1.1.1" 2>/dev/null | wc -l)
-  fi
-  if [ -n "$hops" ] && [ "$hops" -gt 0 ]; then
-    RESULT_ADV_NET_HOPS=$hops
-    echo -e "  ${C_GREEN}✓${C_RESET} Hops to 1.1.1.1: ${C_BOLD}${RESULT_ADV_NET_HOPS}${C_RESET}"
-  else
-    RESULT_ADV_NET_HOPS=0
-    echo -e "  ${C_YELLOW}  Traceroute not available${C_RESET}"
-  fi
-
-  section_end
-}
-
-# ============================================================
-# STANDARD MEMORY BENCHMARK
-# ============================================================
+# =============================================================================
+#  BENCHMARK: MEMORY (sysbench)
+# =============================================================================
 
 bench_memory() {
-  section_start "Memory Benchmark"
-  ensure_sysbench || { section_end; return 1; }
+    _info "Running memory benchmark (sysbench)..."
 
-  local mem_total="10G"
-  local mem_block="1M"
-  [ "$CONFIG_QUICK" = true ] && mem_total="2G"
-  [ "$CONFIG_FULL" = true ] && mem_total="20G"
+    _print_section_header 'Memory Benchmark (sysbench)'
 
-  echo -e "  ${C_BOLD}Memory read test (${mem_total})...${C_RESET}"
-  local read_out
-  read_out=$(sysbench memory --memory-block-size="$mem_block" --memory-total-size="$mem_total" --memory-oper=read run 2>/dev/null)
-  RESULT_MEM_READ=$(echo "$read_out" | sed -n 's/.*(\([0-9.]*\) MiB\/sec).*/\1/p')
-  [ -z "$RESULT_MEM_READ" ] && RESULT_MEM_READ=0
-  echo -e "  ${C_GREEN}✓${C_RESET} Read:  ${C_BOLD}${RESULT_MEM_READ}${C_RESET} MiB/s"
+    ensure_command sysbench sysbench || { _print_line 'sysbench not available'; _print_section_footer; return 1; }
 
-  echo -e "  ${C_BOLD}Memory write test (${mem_total})...${C_RESET}"
-  local write_out
-  write_out=$(sysbench memory --memory-block-size="$mem_block" --memory-total-size="$mem_total" --memory-oper=write run 2>/dev/null)
-  RESULT_MEM_WRITE=$(echo "$write_out" | sed -n 's/.*(\([0-9.]*\) MiB\/sec).*/\1/p')
-  [ -z "$RESULT_MEM_WRITE" ] && RESULT_MEM_WRITE=0
-  echo -e "  ${C_GREEN}✓${C_RESET} Write: ${C_BOLD}${RESULT_MEM_WRITE}${C_RESET} MiB/s"
+    local total_size
+    if [[ $HABS_QUICK -eq 1 ]]; then
+        total_size='2G'
+    elif [[ $HABS_FULL -eq 1 ]]; then
+        total_size='20G'
+    else
+        total_size='10G'
+    fi
 
-  section_end
+    local read_result write_result
+    local read_mbs=0 write_mbs=0
+
+    # Sequential read
+    _spinner_start "Memory Read (${total_size}, 1M blocks) ..."
+    read_result=$(run_with_timeout 300 sysbench memory --memory-block-size=1M --memory-total-size="$total_size" --memory-oper=read memory-run 2>/dev/null)
+    _spinner_stop
+    read_mbs=$(echo "$read_result" | grep -i 'transferred' | grep -oP '\d+\.?\d*\s*MiB/sec' | grep -oP '\d+\.?\d*' | head -1 || echo '0')
+    [[ -z "$read_mbs" ]] && read_mbs=0
+    _ok "Read:  ${read_mbs} MiB/s"
+
+    # Sequential write
+    _spinner_start "Memory Write (${total_size}, 1M blocks) ..."
+    write_result=$(run_with_timeout 300 sysbench memory --memory-block-size=1M --memory-total-size="$total_size" --memory-oper=write memory-run 2>/dev/null)
+    _spinner_stop
+    write_mbs=$(echo "$write_result" | grep -i 'transferred' | grep -oP '\d+\.?\d*\s*MiB/sec' | grep -oP '\d+\.?\d*' | head -1 || echo '0')
+    [[ -z "$write_mbs" ]] && write_mbs=0
+    _ok "Write: ${write_mbs} MiB/s"
+
+    _print_section_footer
+
+    HABS_RESULTS[mem_read_mbs]=$read_mbs
+    HABS_RESULTS[mem_write_mbs]=$write_mbs
+    HABS_RESULTS[mem_total_size]=$total_size
 }
 
-# ============================================================
-# DISK BENCHMARK (fio — 4k/64k/512k/1m mixed 50/50, dd fallback)
-# ============================================================
+# =============================================================================
+#  BENCHMARK: DISK (dd)
+# =============================================================================
 
 bench_disk() {
-  section_start "Disk Benchmark"
-  local temp_dir="${TMPDIR:-/tmp}"
-  [ ! -w "$temp_dir" ] && temp_dir="."
+    _info "Running disk benchmark (dd)..."
 
-  local fio_file="$temp_dir/habs_disk.$$"
-  TEMP_FILES+=("$fio_file")
+    _print_section_header 'Disk Benchmark (dd)'
 
-  # ZFS space inflation check
-  local zfs_inflate=1
-  [ -f "/sys/module/zfs/parameters/spa_asize_inflation" ] && zfs_inflate=$(cat /sys/module/zfs/parameters/spa_asize_inflation 2>/dev/null || echo 1)
-  local zfs_mul=$((zfs_inflate * 2))
+    _ensure_tmpdir
+    local testfile="${HABS_TMPDIR}/dd_test"
+    local test_size=1024  # 1G default, in MB
 
-  local fio_avail=false
-  if command_exists fio; then
-    fio_avail=true
-  else
-    ensure_fio 2>/dev/null && fio_avail=true || true
-  fi
-
-  if [ "$fio_avail" = true ]; then
-    local runtime=20
-    [ "$CONFIG_QUICK" = true ] && runtime=10
-    [ "$CONFIG_FULL" = true ] && runtime=40
-    local fio_size="1G"
-    [ "$CONFIG_QUICK" = true ] && fio_size="512M"
-    [ "$CONFIG_FULL" = true ] && fio_size="2G"
-
-    # ZFS-aware space check
-    local need_kb=0
-    case "$fio_size" in *G) need_kb=$((${fio_size%G} * 1048576 * zfs_mul)) ;; *M) need_kb=$((${fio_size%M} * 1024 * zfs_mul)) ;; esac
-    local avail_kb=0
-    command_exists df && avail_kb=$(df -k "$temp_dir" 2>/dev/null | tail -1 | awk '{print $4}')
-    if [ "$avail_kb" -gt 0 ] && [ "$avail_kb" -lt "$need_kb" ]; then
-      fio_size="256M"
-      log_warn "Disk space limited, using ${fio_size}"
+    # Auto-scale based on available space
+    local avail_mb=0
+    if [[ -n "${HABS_SYSINFO[disk_avail]}" ]]; then
+        avail_mb=$(( HABS_SYSINFO[disk_avail] / 1048576 ))
+    fi
+    if [[ $avail_mb -gt 0 ]] && [[ $avail_mb -lt 2000 ]]; then
+        test_size=256
+        _print_line "${C_YELLOW}Low disk space: scaling test to ${test_size}M${C_RESET}"
     fi
 
-    echo -e "  ${C_DIM}Generating fio test file (${fio_size})...${C_RESET}"
-    fio --name=setup --ioengine=libaio --rw=read --bs=64k --iodepth=64 --numjobs=2 \
-        --size="$fio_size" --runtime=1 --filename="$fio_file" --direct=1 --minimal &>/dev/null || true
+    local results_4kw=0 results_4kr=0 results_1mw=0 results_1mr=0
+    local iops_4kw=0 iops_4kr=0
 
-    local block_sizes=("4k" "64k" "512k" "1m")
-    local bs_labels=("4K" "64K" "512K" "1M")
-    local disk_results=()
+    # 1M Sequential Write
+    _spinner_start "1M Sequential Write (${test_size}M) ..."
+    results_1mw=$(run_with_timeout 120 dd if=/dev/zero of="$testfile" bs=1M count="$test_size" oflag=direct 2>&1 | awk '/copied/ {print $(NF-1)}')
+    _spinner_stop
+    results_1mw=${results_1mw:-0}
+    # Convert to MB/s if in bytes/sec
+    if [[ $results_1mw =~ ^[0-9]+(\.[0-9]+)?$ ]] && [[ $(echo "$results_1mw < 10000" | bc -l 2>/dev/null) == 1 ]]; then
+        results_1mw=$(echo "scale=2; $results_1mw / 1" | bc -l 2>/dev/null || echo "$results_1mw")
+    fi
+    _ok "1M Write:  ${results_1mw} MB/s"
 
-    echo -e "  ${C_DIM}fio mixed R+W 50/50 by block size:${C_RESET}"
-    local bi=0
-    for bs in "${block_sizes[@]}"; do
-      echo -ne "  ${C_BOLD}  ${bs}...${C_RESET}" >&2
-      local test_out
-      test_out=$(timeout $((runtime + 10)) fio --name="${bs}" --ioengine=libaio --rw=randrw --rwmixread=50 \
-          --bs="$bs" --iodepth=64 --numjobs=2 --size="$fio_size" --runtime="$runtime" \
-          --gtod_reduce=1 --direct=1 --filename="$fio_file" --group_reporting --minimal 2>/dev/null) || true
-      if [ -n "$test_out" ]; then
-        local ir=$(echo "$test_out" | awk -F';' '{print $8}')
-        local iw=$(echo "$test_out" | awk -F';' '{print $49}')
-        local br=$(echo "$test_out" | awk -F';' '{print $7}')
-        local bw=$(echo "$test_out" | awk -F';' '{print $48}')
-        local it=$((ir + iw))
-        local bt=$((br + bw))
-        disk_results+=("$bt" "$br" "$bw" "$it" "$ir" "$iw")
-        echo -e " ${C_GREEN}done${C_RESET}" >&2
-      else
-        disk_results+=(0 0 0 0 0 0)
-        echo -e " ${C_YELLOW}fail${C_RESET}" >&2
-      fi
-      bi=$((bi + 1))
-    done
+    # 1M Sequential Read
+    _spinner_start "1M Sequential Read (${test_size}M) ..."
+    results_1mr=$(run_with_timeout 120 dd if="$testfile" of=/dev/null bs=1M count="$test_size" iflag=direct 2>&1 | awk '/copied/ {print $(NF-1)}')
+    _spinner_stop
+    results_1mr=${results_1mr:-0}
+    _ok "1M Read:   ${results_1mr} MB/s"
 
-    local i4=$((0 * 6)) im=$((3 * 6))
-    RESULT_DISK_4K_READ=${disk_results[$((i4 + 1))]:-0}
-    RESULT_DISK_4K_WRITE=${disk_results[$((i4 + 2))]:-0}
-    RESULT_DISK_1M_READ=${disk_results[$((im + 1))]:-0}
-    RESULT_DISK_1M_WRITE=${disk_results[$((im + 2))]:-0}
-    RESULT_ADV_FIO_RND_R_IOPS=${disk_results[$((i4 + 4))]:-0}
-    RESULT_ADV_FIO_RND_W_IOPS=${disk_results[$((i4 + 5))]:-0}
+    # 4K Random Write (using 256M for 4K)
+    local test_size_4k=256
+    if [[ $avail_mb -gt 0 ]] && [[ $avail_mb -lt 500 ]]; then
+        test_size_4k=64
+    fi
+    local count_4k=$(( test_size_4k * 256 ))  # 256M / 4K blocks
 
-    echo ""
-    printf "  %-10s | %-20s | %-20s\n" "Block Size" "Write (MB/s)" "Read (MB/s)"
-    printf "  %-10s | %-20s | %-20s\n" "----------" "------------" "-----------"
-    for i in 0 1 2 3; do
-      local idx=$((i * 6))
-      local bw_w=$(awk "BEGIN {printf \"%.1f\", ${disk_results[$((idx + 2))]:-0}/1000}" 2>/dev/null)
-      local bw_r=$(awk "BEGIN {printf \"%.1f\", ${disk_results[$((idx + 1))]:-0}/1000}" 2>/dev/null)
-      local iops_w="${disk_results[$((idx + 5))]:-0}"
-      local iops_r="${disk_results[$((idx + 4))]:-0}"
-      local iw_fmt=$(awk "BEGIN {printf \"%.1fk\", ${iops_w}/1000}" 2>/dev/null)
-      local ir_fmt=$(awk "BEGIN {printf \"%.1fk\", ${iops_r}/1000}" 2>/dev/null)
-      printf "  %-10s | %-8s (%s IOPS) | %-8s (%s IOPS)\n" "${bs_labels[$i]}" "${bw_w}" "${iw_fmt}" "${bw_r}" "${ir_fmt}"
-    done
+    _spinner_start "4K Random Write (${test_size_4k}M) ..."
+    results_4kw=$(run_with_timeout 180 dd if=/dev/zero of="${testfile}_4k" bs=4K count="$count_4k" oflag=direct 2>&1 | awk '/copied/ {print $(NF-1)}')
+    _spinner_stop
+    results_4kw=${results_4kw:-0}
+    _ok "4K Write:  ${results_4kw} MB/s"
 
-  else
-    # dd fallback — 3 runs averaged
-    echo -e "  ${C_DIM}dd sequential test (3 runs, averaged):${C_RESET}"
-    local avail_kb=0
-    command_exists df && avail_kb=$(df -k "$temp_dir" 2>/dev/null | tail -1 | awk '{print $4}')
-    local dd_count=16384
-    [ "$CONFIG_QUICK" = true ] && dd_count=8192
-    [ "$CONFIG_FULL" = true ] && dd_count=32768
-    local w_vals=() r_vals=() w_sum=0 r_sum=0
+    # Calculate 4K write IOPS
+    iops_4kw=$(echo "scale=0; $results_4kw * 1024 / 4" | bc -l 2>/dev/null || echo 0)
 
-    for run in 1 2 3; do
-      echo -ne "  ${C_BOLD}  Run ${run}...${C_RESET}" >&2
-      local w_out=$(dd if=/dev/zero of="$fio_file" bs=64k count="$dd_count" oflag=direct 2>&1) || true
-      local w_val=$(echo "$w_out" | grep -oP '[\d.]+(?=\s+(MB|GB)/s)' | head -1)
-      [ -z "$w_val" ] && w_val=0
-      w_vals+=("$w_val")
-      w_sum=$(awk "BEGIN {print $w_sum + $w_val}" 2>/dev/null)
+    # 4K Random Read
+    _spinner_start "4K Random Read (${test_size_4k}M) ..."
+    results_4kr=$(run_with_timeout 180 dd if="${testfile}_4k" of=/dev/null bs=4K count="$count_4k" iflag=direct 2>&1 | awk '/copied/ {print $(NF-1)}')
+    _spinner_stop
+    results_4kr=${results_4kr:-0}
+    _ok "4K Read:   ${results_4kr} MB/s"
 
-      is_root && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
-      local r_out=$(dd if="$fio_file" of=/dev/null bs=8k 2>&1) || true
-      local r_val=$(echo "$r_out" | grep -oP '[\d.]+(?=\s+(MB|GB)/s)' | head -1)
-      [ -z "$r_val" ] && r_val=0
-      r_vals+=("$r_val")
-      r_sum=$(awk "BEGIN {print $r_sum + $r_val}" 2>/dev/null)
-      echo -e " ${C_GREEN}done${C_RESET}" >&2
-      rm -f "$fio_file" 2>/dev/null || true
-    done
+    # Calculate 4K read IOPS
+    iops_4kr=$(echo "scale=0; $results_4kr * 1024 / 4" | bc -l 2>/dev/null || echo 0)
 
-    local w_avg=$(awk "BEGIN {printf \"%.2f\", $w_sum / 3}" 2>/dev/null)
-    local r_avg=$(awk "BEGIN {printf \"%.2f\", $r_sum / 3}" 2>/dev/null)
-    RESULT_DISK_1M_WRITE=$w_avg
-    RESULT_DISK_1M_READ=$r_avg
+    _print_empty
+    _print_kv_b '4K Write IOPS'    "$(fmt_number $iops_4kw 0)"
+    _print_kv_b '4K Read IOPS'     "$(fmt_number $iops_4kr 0)"
 
-    echo ""
-    printf "  %-10s | %-11s | %-11s | %-11s | %-11s\n" "" "Run 1" "Run 2" "Run 3" "Average"
-    printf "  %-10s | %-11s | %-11s | %-11s | %-11s\n" "----------" "-----" "-----" "-----" "-------"
-    printf "  %-10s | %-11s | %-11s | %-11s | %-11s\n" "Write" "${w_vals[0]} MB/s" "${w_vals[1]} MB/s" "${w_vals[2]} MB/s" "${w_avg} MB/s"
-    printf "  %-10s | %-11s | %-11s | %-11s | %-11s\n" "Read" "${r_vals[0]} MB/s" "${r_vals[1]} MB/s" "${r_vals[2]} MB/s" "${r_avg} MB/s"
-  fi
+    # Cleanup
+    rm -f "$testfile" "${testfile}_4k" 2>/dev/null || true
 
-  # ioping disk latency
-  if command_exists ioping; then
-    echo ""
-    echo -e "  ${C_BOLD}Disk latency (ioping)...${C_RESET}"
-    local ioping_out=$(ioping -c 5 -D "$temp_dir" 2>&1) || true
-    RESULT_ADV_IOPING_LAT=$(echo "$ioping_out" | grep -oP '[\d.]+(?=\s+ms.*\()' | head -1)
-    [ -z "$RESULT_ADV_IOPING_LAT" ] && RESULT_ADV_IOPING_LAT=$(echo "$ioping_out" | grep 'avg' | grep -oP '[\d.]+(?=\s*ms)' | head -1)
-    [ -z "$RESULT_ADV_IOPING_LAT" ] && RESULT_ADV_IOPING_LAT=0
-    echo -e "  ${C_GREEN}✓${C_RESET} Avg latency: ${C_BOLD}${RESULT_ADV_IOPING_LAT}${C_RESET} ms"
-  fi
+    _print_section_footer
 
-  rm -f "$fio_file" 2>/dev/null || true
-  section_end
+    HABS_RESULTS[disk_1m_write_mbs]=$results_1mw
+    HABS_RESULTS[disk_1m_read_mbs]=$results_1mr
+    HABS_RESULTS[disk_4k_write_mbs]=$results_4kw
+    HABS_RESULTS[disk_4k_read_mbs]=$results_4kr
+    HABS_RESULTS[disk_4k_write_iops]=$iops_4kw
+    HABS_RESULTS[disk_4k_read_iops]=$iops_4kr
+    HABS_RESULTS[disk_test_size]=$test_size
 }
 
-# ============================================================
-# INSTALL SPEEDTEST CLI (Ookla)
-# ============================================================
-
-_SPEEDTEST_CHECKED=false
-_SPEEDTEST_AVAILABLE=false
-
-ensure_speedtest() {
-  if [ "$_SPEEDTEST_CHECKED" = true ]; then
-    [ "$_SPEEDTEST_AVAILABLE" = true ] && return 0 || return 1
-  fi
-  _SPEEDTEST_CHECKED=true
-  if command_exists speedtest; then
-    _SPEEDTEST_AVAILABLE=true
-    return 0
-  fi
-  log_info "Installing Ookla Speedtest CLI..."
-  if command_exists apt-get; then
-    apt-get install -y speedtest-cli &>/dev/null && { log_success "speedtest-cli installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
-  elif command_exists yum; then
-    yum install -y speedtest-cli &>/dev/null && { log_success "speedtest-cli installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
-  elif command_exists apk; then
-    apk add speedtest-cli &>/dev/null && { log_success "speedtest-cli installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
-  elif command_exists pacman; then
-    pacman -S --noconfirm speedtest-cli &>/dev/null && { log_success "speedtest-cli installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
-  elif command_exists zypper; then
-    zypper install -y speedtest-cli &>/dev/null && { log_success "speedtest-cli installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
-  fi
-  # Try direct download as fallback
-  local st_url="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-$(uname -m).tgz"
-  local st_tar="/tmp/speedtest-cli.tgz"
-  local st_dir="/tmp/speedtest-cli"
-  if command_exists curl; then
-    curl -sL --max-time 30 -o "$st_tar" "$st_url" 2>/dev/null && \
-    mkdir -p "$st_dir" && \
-    tar -xzf "$st_tar" -C "$st_dir" 2>/dev/null && \
-    cp "$st_dir/speedtest" /usr/local/bin/ 2>/dev/null && \
-    chmod +x /usr/local/bin/speedtest 2>/dev/null && \
-    { log_success "speedtest CLI installed"; _SPEEDTEST_AVAILABLE=true; return 0; }
-  fi
-  log_warn "Ookla Speedtest CLI not available. Using curl fallback."
-  return 1
-}
-
-# ============================================================
-# STANDARD NETWORK BENCHMARK
-# ============================================================
+# =============================================================================
+#  BENCHMARK: NETWORK (curl multi-CDN + iperf3)
+# =============================================================================
 
 bench_network() {
-  section_start "Network Benchmark"
+    _info "Running network benchmark..."
 
-  local has_speedtest=false
-  ensure_speedtest 2>/dev/null && has_speedtest=true || true
+    _print_section_header 'Network Benchmark'
 
-  if [ "$has_speedtest" = true ]; then
-    local st_timeout=30
-    [ "$CONFIG_QUICK" = true ] && st_timeout=15
-    [ "$CONFIG_FULL" = true ] && st_timeout=60
+    ensure_command curl curl || { _print_line 'curl not available'; _print_section_footer; return 1; }
 
-    # Ookla Speedtest: nearest server
-    echo -e "  ${C_BOLD}Ookla Speedtest (nearest server)...${C_RESET}"
-    local st_out
-    st_out=$(speedtest --accept-license --accept-gdpr -f json 2>/dev/null) || true
-    if [ -n "$st_out" ] && command_exists python3; then
-      local st_dl st_ul st_lat
-      st_dl=$(echo "$st_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('download',{}).get('bandwidth',0)*8/1000000)" 2>/dev/null || echo 0)
-      st_ul=$(echo "$st_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('upload',{}).get('bandwidth',0)*8/1000000)" 2>/dev/null || echo 0)
-      st_lat=$(echo "$st_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ping',{}).get('latency',0))" 2>/dev/null || echo 0)
-      local st_server=$(echo "$st_out" | python3 -c "import sys,json; d=json.load(sys.stdin); s=d.get('server',{}); print(f\"{s.get('name','?')} ({s.get('location','?')})\")" 2>/dev/null || echo "?")
-      RESULT_NET_DOWNLOAD=$(awk "BEGIN {printf \"%.2f\", $st_dl}" 2>/dev/null || echo 0)
-      RESULT_NET_UPLOAD=$(awk "BEGIN {printf \"%.2f\", $st_ul}" 2>/dev/null || echo 0)
-      echo -e "  ${C_GREEN}✓${C_RESET} Download: ${C_BOLD}${RESULT_NET_DOWNLOAD}${C_RESET} Mbps"
-      echo -e "  ${C_GREEN}✓${C_RESET} Upload:   ${C_BOLD}${RESULT_NET_UPLOAD}${C_RESET} Mbps"
-      echo -e "  ${C_DIM}   Server: ${st_server}, ping: ${st_lat}ms${C_RESET}"
+    local download_speeds=()
+    local best_dl=0 best_server=''
+    local latency_results=()
+    local avg_latency=0
+
+    # Download tests from multiple CDNs
+    local dl_size='100MB'
+    if [[ $HABS_QUICK -eq 1 ]]; then
+        dl_size='10MB'
     fi
-
-    # Multi-country speedtest
-    echo -e "  ${C_BOLD}Multi-location speedtest...${C_RESET}"
-    local countries=("Singapore" "United States" "Germany")
-    local country_labels=("Singapore" "US" "Germany")
-    for i in "${!countries[@]}"; do
-      local ctry="${countries[$i]}"
-      local label="${country_labels[$i]}"
-      echo -ne "  ${C_DIM}  ${label}...${C_RESET} " >&2
-      local st_ctry
-      st_ctry=$(speedtest --accept-license --accept-gdpr -f json -s "$(speedtest --list 2>/dev/null | grep -im1 "$ctry" | awk '{print $1}' | head -1)" 2>/dev/null) || true
-      if [ -n "$st_ctry" ]; then
-        local st_dl_ctry=$(echo "$st_ctry" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('download',{}).get('bandwidth',0)*8/1000000)" 2>/dev/null || echo 0)
-        echo -e "${C_GREEN}${st_dl_ctry}${C_RESET} Mbps" >&2
-      else
-        echo -e "${C_YELLOW}skip${C_RESET}" >&2
-      fi
-    done
-  else
-    # Fallback: curl multi-CDN download
-    if ! command_exists curl; then
-      echo -e "  ${C_YELLOW}curl not found. Skipping network benchmark.${C_RESET}"
-      section_end
-      return 1
-    fi
-
-    local urls=(
-      "https://speed.cloudflare.com/__down?bytes=100000000"
-      "https://cachefly.cachefly.net/100mb.test"
-      "https://proof.ovh.net/files/100Mb.dat"
+    local -a dl_tests=(
+        "10MB|https://speed.cloudflare.com/__down?bytes=10485760|Cloudflare"
+        "10MB|https://cachefly.cachefly.net/10mb.test|CacheFly"
+        "10MB|https://proof.ovh.net/files/10Mb.dat|OVH"
+        "10MB|https://speedtest.tele2.net/10MB.zip|Tele2"
     )
-    local timeout=15
-    [ "$CONFIG_QUICK" = true ] && timeout=8
-    [ "$CONFIG_FULL" = true ] && timeout=30
-    local best_speed=0 best_server=""
+    if [[ $HABS_FULL -eq 1 ]]; then
+        dl_tests=(
+            "100MB|https://speed.cloudflare.com/__down?bytes=104857600|Cloudflare"
+            "100MB|https://cachefly.cachefly.net/100mb.test|CacheFly"
+            "100MB|https://proof.ovh.net/files/100Mb.dat|OVH"
+            "100MB|https://speedtest.tele2.net/100MB.zip|Tele2"
+        )
+    fi
 
-    echo -e "  ${C_BOLD}Download speed test (curl fallback)...${C_RESET}"
-    for url in "${urls[@]}"; do
-      local server=$(echo "$url" | awk -F/ '{print $3}')
-      echo -ne "  ${C_DIM}  ${server}...${C_RESET} " >&2
-      local speed_bps
-      speed_bps=$(curl -sL --max-time "$timeout" -o /dev/null -w "%{speed_download}" "$url" 2>/dev/null) || true
-      if [ -n "$speed_bps" ] && [ "$(awk "BEGIN {print ($speed_bps > 0)}")" -eq 1 ]; then
-        local speed_mbps=$(awk "BEGIN {printf \"%.2f\", $speed_bps * 8 / 1000000}" 2>/dev/null)
-        echo -e "${C_GREEN}${speed_mbps}${C_RESET} Mbps" >&2
-        if [ "$(awk "BEGIN {print ($speed_mbps > $best_speed)}")" -eq 1 ]; then
-          best_speed=$speed_mbps
-          best_server=$server
+    _print_empty
+    _print_subheader "Download Speed"
+
+    for entry in "${dl_tests[@]}"; do
+        local label url server
+        label=$(echo "$entry" | cut -d'|' -f1)
+        url=$(echo "$entry" | cut -d'|' -f2)
+        server=$(echo "$entry" | cut -d'|' -f3)
+
+        _spinner_start "Download from ${server} ..."
+        local result
+        result=$(run_with_timeout 30 curl -s -o /dev/null -w '%{speed_download}' --max-time 25 "$url" 2>/dev/null || echo '0')
+        _spinner_stop
+
+        local speed_mbps
+        speed_mbps=$(echo "scale=2; $result * 8 / 1000000" | bc -l 2>/dev/null || echo '0')
+        _print_kv "${server}" "$(fmt_number $speed_mbps) Mbps" "${C_GREEN}"
+
+        download_speeds+=("$speed_mbps")
+        if [[ $(echo "$speed_mbps > $best_dl" | bc -l 2>/dev/null) == 1 ]]; then
+            best_dl=$speed_mbps
+            best_server=$server
         fi
-      else
-        echo -e "${C_YELLOW}timeout/error${C_RESET}" >&2
-      fi
     done
-    RESULT_NET_DOWNLOAD=$best_speed
-    echo -e "  ${C_GREEN}✓${C_RESET} Download: ${C_BOLD}${RESULT_NET_DOWNLOAD}${C_RESET} Mbps (best: ${best_server})"
 
-    # Upload via iperf3 (curl fallback only)
-    RESULT_NET_UPLOAD=0
-    if command_exists iperf3; then
-      echo -e "  ${C_BOLD}Upload test (iperf3)...${C_RESET}"
-      local iperf_servers=("iperf.he.net" "iperf.online.net")
-      for server in "${iperf_servers[@]}"; do
-        local uplink
-        uplink=$(iperf3 -c "$server" -t 5 -J 2>/dev/null) || true
-        if [ -n "$uplink" ]; then
-          local up_mbps
-          up_mbps=$(echo "$uplink" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('end',{}).get('sum_sent',{}).get('bits_per_second',0)/1000000)" 2>/dev/null || echo "")
-          if [ -n "$up_mbps" ] && [ "$(awk "BEGIN {print ($up_mbps > 0)}")" -eq 1 ]; then
-            RESULT_NET_UPLOAD=$up_mbps
-            echo -e "  ${C_GREEN}✓${C_RESET} Upload:   ${C_BOLD}${RESULT_NET_UPLOAD}${C_RESET} Mbps (${server})"
-            break
-          fi
+    _print_empty
+    _print_kv_b 'Best Download'  "$(fmt_number $best_dl) Mbps (${best_server})"
+
+    # Upload test via iperf3
+    _print_empty
+    _print_subheader "Upload Speed"
+
+    local upload_mbps=0
+    local upload_server=''
+    if ! check_command iperf3 && ! ensure_command iperf3 iperf3; then
+        _skip "iperf3 not available — skipping upload test"
+        _print_kv 'Upload' 'N/A (iperf3 unavailable)' "${C_GREY}"
+    else
+        local -a iperf_servers=('iperf.he.net' 'iperf.online.net' 'iperf.scottlinux.com')
+        local up_result=''
+        for iperf_server in "${iperf_servers[@]}"; do
+            _spinner_start "Upload to ${iperf_server} (iperf3) ..."
+            up_result=$(run_with_timeout 30 iperf3 -c "$iperf_server" -P 2 -t 10 -J 2>/dev/null || echo '')
+            _spinner_stop
+            if [[ -n "$up_result" ]]; then
+                if check_command python3; then
+                    upload_mbps=$(echo "$up_result" | python3 -c "
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    bps=d.get('end',{}).get('sum_sent',{}).get('bits_per_second',0)
+    print('{:.2f}'.format(bps/1e6))
+except: print('0')
+" 2>/dev/null) || upload_mbps='0'
+                else
+                    upload_mbps=$(echo "$up_result" | grep -oP '"bits_per_second":\s*\K[0-9.]+' | head -1 || echo '0')
+                    upload_mbps=$(echo "scale=2; $upload_mbps / 1000000" | bc -l 2>/dev/null || echo '0')
+                fi
+                if [[ $(echo "$upload_mbps > 0" | bc -l) == 1 ]]; then
+                    upload_server=$iperf_server
+                    _ok "Upload:  $(fmt_number $upload_mbps) Mbps (${iperf_server})"
+                    break
+                fi
+            fi
+            _skip "Upload to ${iperf_server} failed, trying next..."
+            upload_mbps=0
+        done
+        if [[ -z "$upload_server" ]]; then
+            _print_kv 'Upload' 'N/A (all iperf3 servers failed)' "${C_GREY}"
         fi
-      done
-      if [ "$(awk "BEGIN {print ($RESULT_NET_UPLOAD == 0)}")" -eq 1 ]; then
-        echo -e "  ${C_YELLOW}  iperf3 servers unreachable${C_RESET}"
-      fi
     fi
-  fi
 
-  # iperf3 multi-server test
-  if command_exists iperf3; then
-    echo -e "  ${C_BOLD}iperf3 multi-server test...${C_RESET}"
-    local iperf_servers=(
-      "speedtest.lax1.leaseweb.net|LeaseWeb LA|5201-5210"
-      "speedtest.sjc1.leaseweb.net|LeaseWeb SJC|5201-5210"
-      "iperf.he.net|Hurricane Electric|5201-5205"
-      "speedtest.frankfurt1.leaseweb.net|LeaseWeb FRA|5201-5210"
-      "iperf.online.net|Online.net|5201-5216"
-    )
-    printf "  %-28s | %-15s | %-10s | %-10s | %-7s\n" "Provider" "Location" "Send (Mbps)" "Recv (Mbps)" "Ping"
-    printf "  %-28s | %-15s | %-10s | %-10s | %-7s\n" "--------" "--------" "-----------" "-----------" "----"
-    for entry in "${iperf_servers[@]}"; do
-      local url=$(echo "$entry" | cut -d'|' -f1)
-      local loc=$(echo "$entry" | cut -d'|' -f2)
-      local ports=$(echo "$entry" | cut -d'|' -f3)
-      local send_result recv_result send_val recv_val
-      send_result=$(_iperf_test "$url" "$ports" "" "" "send")
-      recv_result=$(_iperf_test "$url" "$ports" "" "" "recv")
-      send_val=$(echo "$send_result" | awk '{print $1}')
-      recv_val=$(echo "$recv_result" | awk '{print $1}')
-      local ping_val="?"
-      [ "$send_result" != "busy" ] && [ -n "$send_val" ] && ping_val="N/A" || true
-      if [ "$send_result" = "busy" ] && [ "$recv_result" = "busy" ]; then
-        printf "  %-28s | %-15s | %-10s | %-10s | %-7s\n" "$loc" "$url" "busy" "busy" "-"
-      else
-        printf "  %-28s | %-15s | %-10s | %-10s | %-7s\n" "$loc" "$url" "${send_val:-?}" "${recv_val:-?}" "${ping_val}"
-      fi
+    # Latency test
+    _print_empty
+    _print_subheader "Latency"
+
+    local -a ping_targets=('1.1.1.1' '8.8.8.8' 'cloudflare.com')
+    local ping_count=4
+    [[ $HABS_QUICK -eq 1 ]] && ping_count=2
+    [[ $HABS_FULL -eq 1 ]] && ping_count=10
+
+    for target in "${ping_targets[@]}"; do
+        if check_command ping; then
+            local ping_result
+            ping_result=$(run_with_timeout 15 ping -c "$ping_count" "$target" 2>/dev/null || true)
+            local avg
+            avg=$(echo "$ping_result" | grep -oP '(?<=rtt min/avg/max/mdev = )[0-9.]+' | cut -d'/' -f2 || echo '0')
+            [[ -z "$avg" ]] && avg=0
+            _print_kv "${target}" "${avg} ms avg" "${C_GREEN}"
+            latency_results+=("$avg")
+        else
+            _skip "ping not available"
+        fi
     done
-  fi
 
-  # Latency test (always)
-  echo -e "  ${C_BOLD}Latency test...${C_RESET}"
-  local targets=("1.1.1.1" "8.8.8.8" "cloudflare.com")
-  local total_lat=0 lat_count=0
-  for target in "${targets[@]}"; do
-    local lat
-    lat=$(ping -c 2 -W 2 "$target" 2>/dev/null | awk -F/ '/^rtt/ {print $5}') || true
-    if [ -n "$lat" ]; then
-      total_lat=$(awk "BEGIN {print $total_lat + $lat}" 2>/dev/null)
-      lat_count=$((lat_count + 1))
-      printf "  ${C_DIM}  %-18s ${C_RESET} %s ms\n" "${target}:" "${lat}"
+    # Average latency across all targets
+    local total_lat=0 count_lat=0
+    for lat in "${latency_results[@]}"; do
+        total_lat=$(echo "scale=2; $total_lat + $lat" | bc -l 2>/dev/null || echo '0')
+        count_lat=$((count_lat + 1))
+    done
+    if [[ $count_lat -gt 0 ]]; then
+        avg_latency=$(echo "scale=2; $total_lat / $count_lat" | bc -l 2>/dev/null || echo '0')
+    fi
+
+    _print_section_footer
+
+    HABS_RESULTS[net_download_mbps]=$best_dl
+    HABS_RESULTS[net_best_server]="$best_server"
+    HABS_RESULTS[net_upload_mbps]=$upload_mbps
+    HABS_RESULTS[net_avg_latency]=$avg_latency
+}
+
+# =============================================================================
+#  BENCHMARK: ADVANCED CPU (stress-ng)
+# =============================================================================
+
+bench_advanced_cpu() {
+    _info "Running advanced CPU benchmark (stress-ng)..."
+
+    _print_section_header 'Advanced CPU (stress-ng)'
+
+    if ! check_command stress-ng; then
+        _print_line "stress-ng not available, attempting install..."
+        ensure_command stress-ng stress-ng || { _print_line 'stress-ng not available'; _print_section_footer; return 1; }
+    fi
+
+    local ncores=${HABS_SYSINFO[cpu_cores]:-$(nproc)}
+    local duration=20
+    [[ $HABS_QUICK -eq 1 ]] && duration=10
+    [[ $HABS_FULL -eq 1 ]] && duration=40
+
+    local matrix_ops=0 fpu_ops=0 crypto_ops=0 cache_ops=0
+
+    # Matrix
+    _spinner_start "Matrix Multiplication (${duration}s) ..."
+    local matrix_out
+    matrix_out=$(run_with_timeout $((duration + 30)) stress-ng --matrix 0 --matrix-method=prod --matrix-size=256 -t "${duration}s" --metrics-brief 2>&1 || true)
+    _spinner_stop
+    matrix_ops=$(echo "$matrix_out" | grep 'matrix' | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+/ && $(i+1)=="bogo") print $i}' | head -1 || echo '0')
+    [[ -z "$matrix_ops" ]] && matrix_ops=0
+    _ok "Matrix:    ${matrix_ops} bogo ops/s"
+
+    # FPU
+    _spinner_start "FPU Operations (${duration}s) ..."
+    local fpu_out
+    fpu_out=$(run_with_timeout $((duration + 30)) stress-ng --fpu 0 -t "${duration}s" --metrics-brief 2>&1 || true)
+    _spinner_stop
+    fpu_ops=$(echo "$fpu_out" | grep 'fpu' | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+/ && $(i+1)=="bogo") print $i}' | head -1 || echo '0')
+    [[ -z "$fpu_ops" ]] && fpu_ops=0
+    _ok "FPU:       ${fpu_ops} bogo ops/s"
+
+    # Crypto
+    _spinner_start "Crypto Operations (${duration}s) ..."
+    local crypto_out
+    crypto_out=$(run_with_timeout $((duration + 30)) stress-ng --crypto 0 -t "${duration}s" --metrics-brief 2>&1 || true)
+    _spinner_stop
+    crypto_ops=$(echo "$crypto_out" | grep 'crypto' | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+/ && $(i+1)=="bogo") print $i}' | head -1 || echo '0')
+    [[ -z "$crypto_ops" ]] && crypto_ops=0
+    _ok "Crypto:    ${crypto_ops} bogo ops/s"
+
+    # Cache
+    _spinner_start "Cache Thrashing (${duration}s) ..."
+    local cache_out
+    cache_out=$(run_with_timeout $((duration + 30)) stress-ng --cache 0 --cache-method=all -t "${duration}s" --metrics-brief 2>&1 || true)
+    _spinner_stop
+    cache_ops=$(echo "$cache_out" | grep 'cache' | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+/ && $(i+1)=="bogo") print $i}' | head -1 || echo '0')
+    [[ -z "$cache_ops" ]] && cache_ops=0
+    _ok "Cache:     ${cache_ops} bogo ops/s"
+
+    _print_section_footer
+
+    HABS_RESULTS[adv_cpu_matrix]=$matrix_ops
+    HABS_RESULTS[adv_cpu_fpu]=$fpu_ops
+    HABS_RESULTS[adv_cpu_crypto]=$crypto_ops
+    HABS_RESULTS[adv_cpu_cache]=$cache_ops
+}
+
+# =============================================================================
+#  BENCHMARK: ADVANCED MEMORY (sysbench multi-block)
+# =============================================================================
+
+bench_advanced_memory() {
+    _info "Running advanced memory benchmark..."
+
+    _print_section_header 'Advanced Memory (sysbench)'
+
+    ensure_command sysbench sysbench || { _print_line 'sysbench not available'; _print_section_footer; return 1; }
+
+    local total_size='2G'
+    [[ $HABS_FULL -eq 1 ]] && total_size='4G'
+
+    local -a block_sizes=('256B' '4K' '64K' '1M')
+    declare -A results_read=()
+
+    for block in "${block_sizes[@]}"; do
+        _spinner_start "Memory Read (${block} blocks) ..."
+        local out
+        out=$(run_with_timeout 180 sysbench memory --memory-block-size="$block" --memory-total-size="$total_size" --memory-oper=read memory-run 2>/dev/null || true)
+        _spinner_stop
+        local mbs
+        mbs=$(echo "$out" | grep -i 'transferred' | grep -oP '\d+\.?\d*\s*MiB/sec' | grep -oP '\d+\.?\d*' | head -1 || echo '0')
+        [[ -z "$mbs" ]] && mbs=0
+        results_read[$block]=$mbs
+        _ok "${block} Read: ${mbs} MiB/s"
+    done
+
+    _print_empty
+    _print_kv_b '256B Read (L1)'  "${results_read[256B]} MiB/s"
+    _print_kv_b '4K Read (L2/L3)'   "${results_read[4K]} MiB/s"
+    _print_kv_b '64K Read (RAM)'    "${results_read[64K]} MiB/s"
+    _print_kv_b '1M Read (RAM)'     "${results_read[1M]} MiB/s"
+
+    _print_section_footer
+
+    HABS_RESULTS[adv_mem_256b]=${results_read[256B]}
+    HABS_RESULTS[adv_mem_4k]=${results_read[4K]}
+    HABS_RESULTS[adv_mem_64k]=${results_read[64K]}
+    HABS_RESULTS[adv_mem_1m]=${results_read[1M]}
+}
+
+# =============================================================================
+#  BENCHMARK: ADVANCED DISK (fio + ioping)
+# =============================================================================
+
+bench_advanced_disk() {
+    _info "Running advanced disk benchmark..."
+
+    _print_section_header 'Advanced Disk (fio + ioping)'
+
+    _ensure_tmpdir
+
+    # fio random 4K mixed QD=32
+    if ! check_command fio && ! ensure_command fio fio; then
+        _skip "fio not available — skipping advanced disk benchmark"
     else
-      printf "  ${C_DIM}  %-18s ${C_RESET} %s\n" "${target}:" "${C_YELLOW}timeout${C_RESET}"
+        _print_subheader "fio — Random 4K Mixed (QD=32, 70/30 R/W)"
+
+        local fio_engine='psync'
+        if fio --ioengine=io_uring --version &>/dev/null 2>&1; then
+            fio_engine='io_uring'
+        elif fio --ioengine=libaio --version &>/dev/null 2>&1; then
+            fio_engine='libaio'
+        fi
+
+        _spinner_start "fio Random 4K QD=32 (70/30 mix, engine=${fio_engine}) ..."
+        local fio_out
+        fio_out=$(run_with_timeout 90 fio --name=randrw --ioengine="$fio_engine" --direct=1 --rw=randrw --rwmixread=70 --bs=4K --iodepth=32 --size=512M --numjobs=1 --runtime=30 --time_based --group_reporting --randrepeat=0 --norandommap --output-format=json 2>/dev/null || true)
+        _spinner_stop
+
+        local read_iops=0 write_iops=0 read_lat=0 write_lat=0
+
+        local iops_vals
+        iops_vals=$(echo "$fio_out" | python3 -c "
+import json,sys
+try:
+    d=json.load(sys.stdin)
+    j=d.get('jobs',[{}])[0]
+    r=j.get('read',{})
+    w=j.get('write',{})
+    print(r.get('iops',0))
+    print(w.get('iops',0))
+    print(r.get('lat_ns',{}).get('mean',0))
+    print(w.get('lat_ns',{}).get('mean',0))
+except:
+    print('0');print('0');print('0');print('0')
+" 2>/dev/null) || iops_vals='0 0 0 0'
+
+        read_iops=$(echo "$iops_vals" | sed -n '1p')
+        write_iops=$(echo "$iops_vals" | sed -n '2p')
+        read_lat=$(echo "$iops_vals" | sed -n '3p')
+        write_lat=$(echo "$iops_vals" | sed -n '4p')
+        read_lat=$(echo "scale=1; $read_lat / 1000" | bc -l 2>/dev/null || echo "$read_lat")
+        write_lat=$(echo "scale=1; $write_lat / 1000" | bc -l 2>/dev/null || echo "$write_lat")
+
+        _print_kv 'Read IOPS'      "$(fmt_number ${read_iops%.*} 0)" "${C_GREEN}"
+        _print_kv 'Write IOPS'     "$(fmt_number ${write_iops%.*} 0)" "${C_GREEN}"
+        _print_kv 'Read Latency'   "${read_lat} µs" "${C_GREEN}"
+        _print_kv 'Write Latency'  "${write_lat} µs" "${C_GREEN}"
+
+        HABS_RESULTS[adv_disk_fio_read_iops]=${read_iops%.*}
+        HABS_RESULTS[adv_disk_fio_write_iops]=${write_iops%.*}
+        HABS_RESULTS[adv_disk_fio_read_lat_us]=$read_lat
+        HABS_RESULTS[adv_disk_fio_write_lat_us]=$write_lat
     fi
-  done
-  if [ "$lat_count" -gt 0 ]; then
-    RESULT_NET_LATENCY=$(awk "BEGIN {printf \"%.2f\", $total_lat / $lat_count}" 2>/dev/null)
-    echo -e "  ${C_GREEN}✓${C_RESET} Avg latency: ${C_BOLD}${RESULT_NET_LATENCY}${C_RESET} ms"
-  fi
 
-  section_end
-}
+    # ioping latency
+    _print_empty
+    _print_subheader "ioping — Disk Latency"
 
-# ============================================================
-# IPERF3 MULTI-SERVER TEST
-# ============================================================
-
-_iperf_test() {
-  local url=$1 ports=$2 host=$3 flags=$4 dir=$5
-  local result=""
-  local attempt=1
-  while [ $attempt -le 2 ]; do
-    local port
-    port=$(shuf -i "$(echo "$ports" | tr '-' ' ')" -n 1)
-    if [ "$dir" = "send" ]; then
-      result=$(timeout 15 iperf3 "$flags" -c "$url" -p "$port" -P 4 2>/dev/null)
+    if ! check_command ioping && ! ensure_command ioping ioping; then
+        _skip "ioping not available — skipping latency test"
+        HABS_RESULTS[adv_disk_ioping_lat_ms]=0
     else
-      result=$(timeout 15 iperf3 "$flags" -c "$url" -p "$port" -P 4 -R 2>/dev/null)
+        _spinner_start "ioping latency measurement ..."
+        local ioping_out
+        ioping_out=$(run_with_timeout 30 ioping -c 10 -i 0.1 "${HABS_TMPDIR}" 2>/dev/null || true)
+        _spinner_stop
+        local ioping_lat
+        ioping_lat=$(echo "$ioping_out" | grep -oP 'avg=\K[0-9.]+' | head -1 || echo '0')
+        [[ -z "$ioping_lat" ]] && ioping_lat=0
+        _print_kv 'Average Latency' "${ioping_lat} ms" "${C_GREEN}"
+        HABS_RESULTS[adv_disk_ioping_lat_ms]=$ioping_lat
     fi
-    if echo "$result" | grep -q "receiver" && ! echo "$result" | grep -q "error"; then
-      local speed=$(echo "$result" | grep SUM | grep receiver | awk '{print $6}')
-      local unit=$(echo "$result" | grep SUM | grep receiver | awk '{print $7}')
-      [ -n "$speed" ] && [ "$speed" != "0.00" ] && echo "$speed $unit" && return 0
+
+    _print_section_footer
+}
+
+# =============================================================================
+#  BENCHMARK: ADVANCED NETWORK
+# =============================================================================
+
+bench_advanced_network() {
+    _info "Running advanced network benchmark..."
+
+    _print_section_header 'Advanced Network'
+
+    # IPv6 download
+    _print_subheader "IPv6 Download"
+    if check_command curl; then
+        _spinner_start "IPv6 download test (Cloudflare) ..."
+        local ipv6_result
+        ipv6_result=$(run_with_timeout 20 curl -6 -s -o /dev/null -w '%{speed_download}' --max-time 15 'https://speed.cloudflare.com/__down?bytes=10485760' 2>/dev/null || echo '0')
+        _spinner_stop
+        local ipv6_mbps
+        ipv6_mbps=$(echo "scale=2; $ipv6_result * 8 / 1000000" | bc -l 2>/dev/null || echo '0')
+        _print_kv 'IPv6 Download'  "$(fmt_number $ipv6_mbps) Mbps" "${C_GREEN}"
+        HABS_RESULTS[adv_net_ipv6_mbps]=$ipv6_mbps
+    else
+        _skip "curl not available"
     fi
-    attempt=$((attempt + 1))
-    sleep 1
-  done
-  echo "busy"
+
+    # Packet loss
+    _print_empty
+    _print_subheader "Packet Loss"
+    if check_command ping; then
+        local ping_count=10
+        [[ $HABS_QUICK -eq 1 ]] && ping_count=4
+        _spinner_start "Packet loss test (1.1.1.1) ..."
+        local pl_result
+        pl_result=$(run_with_timeout 20 ping -c "$ping_count" '1.1.1.1' 2>&1 || true)
+        _spinner_stop
+        local loss_pct
+        loss_pct=$(echo "$pl_result" | grep -oP '\d+\.?\d*% packet loss' | grep -oP '\d+\.?\d*(?=%)' | head -1 || echo '100')
+        [[ -z "$loss_pct" ]] && loss_pct=100
+        _print_kv 'Packet Loss'    "${loss_pct}%" "${C_GREEN}"
+        HABS_RESULTS[adv_net_packet_loss_pct]=$loss_pct
+    else
+        _skip "ping not available"
+    fi
+
+    # Traceroute
+    _print_empty
+    _print_subheader "Traceroute"
+    if ! check_command traceroute; then
+        ensure_command traceroute traceroute || true
+    fi
+    if check_command traceroute; then
+        _spinner_start "Traceroute to 1.1.1.1 ..."
+        local tr_out
+        tr_out=$(run_with_timeout 30 traceroute -n -q 1 -w 2 '1.1.1.1' 2>&1 || true)
+        _spinner_stop
+        local hops
+        hops=$(echo "$tr_out" | grep -c '^\s*[0-9]' || echo '0')
+        [[ -z "$hops" ]] && hops=0
+        _print_kv 'Hops to 1.1.1.1' "${hops}" "${C_GREEN}"
+        HABS_RESULTS[adv_net_traceroute_hops]=$hops
+    elif check_command mtr; then
+        _spinner_start "Traceroute to 1.1.1.1 (mtr) ..."
+        local tr_out
+        tr_out=$(run_with_timeout 30 mtr -r -c 1 -n '1.1.1.1' 2>&1 || true)
+        _spinner_stop
+        local hops
+        hops=$(echo "$tr_out" | grep -c '^[0-9]\.' || echo '0')
+        HABS_RESULTS[adv_net_traceroute_hops]=$hops
+        _print_kv 'Hops to 1.1.1.1' "${hops}" "${C_GREEN}"
+    else
+        _skip "Neither traceroute nor mtr found — skipping"
+        HABS_RESULTS[adv_net_traceroute_hops]=0
+    fi
+
+    _print_section_footer
 }
 
-# ============================================================
-# SCORING
-# ============================================================
+# =============================================================================
+#  BENCHMARK: GEEKBENCH 6
+# =============================================================================
 
-calculate_score() {
-  local cpu_score=0 mem_score=0 disk_score=0 net_score=0 geekbench_score=0
+bench_geekbench6() {
+    _info "Running Geekbench 6..."
 
-  if [ "$(awk "BEGIN {print ($RESULT_CPU_SINGLE > 0)}")" -eq 1 ]; then
-    cpu_score=$(awk "BEGIN {printf \"%.0f\", ($RESULT_CPU_SINGLE / 100) * 25}" 2>/dev/null)
-    [ "$cpu_score" -gt 25 ] && cpu_score=25
-  fi
+    _print_section_header 'Geekbench 6'
 
-  if [ "$(awk "BEGIN {print ($RESULT_MEM_READ > 0)}")" -eq 1 ]; then
-    mem_score=$(awk "BEGIN {printf \"%.0f\", ($RESULT_MEM_READ / 2000) * 25}" 2>/dev/null)
-    [ "$mem_score" -gt 25 ] && mem_score=25
-  fi
+    _ensure_tmpdir
 
-  if [ "$(awk "BEGIN {print ($RESULT_DISK_1M_READ > 0)}")" -eq 1 ]; then
-    local avg_disk
-    avg_disk=$(awk "BEGIN {printf \"%.0f\", ($RESULT_DISK_1M_WRITE + $RESULT_DISK_1M_READ) / 2}" 2>/dev/null)
-    disk_score=$(awk "BEGIN {printf \"%.0f\", ($avg_disk / 500) * 25}" 2>/dev/null)
-    [ "$disk_score" -gt 25 ] && disk_score=25
-  fi
+    local arch
+    arch=$(get_arch)
+    local gb_url='' gb_dir=''
 
-  if [ "$(awk "BEGIN {print ($RESULT_NET_DOWNLOAD > 0)}")" -eq 1 ]; then
-    net_score=$(awk "BEGIN {printf \"%.0f\", ($RESULT_NET_DOWNLOAD / 500) * 25}" 2>/dev/null)
-    [ "$net_score" -gt 25 ] && net_score=25
-  fi
+    # Determine download URL based on architecture
+    if [[ $arch == 'x86_64' ]]; then
+        gb_url='https://cdn.geekbench.com/Geekbench-6.4.0-Linux.tar.gz'
+        gb_dir='Geekbench-6.4.0-Linux'
+    elif [[ $arch == 'aarch64' ]]; then
+        gb_url='https://cdn.geekbench.com/Geekbench-6.4.0-LinuxARMPremium.tar.gz'
+        gb_dir='Geekbench-6.4.0-LinuxARMPremium'
+    else
+        _print_line "${C_RED}Unsupported architecture for Geekbench 6: ${arch}${C_RESET}"
+        _print_section_footer
+        return 1
+    fi
 
-  if [ "$(awk "BEGIN {print ($RESULT_GB_SINGLE > 0)}")" -eq 1 ]; then
-    geekbench_score=$(awk "BEGIN {printf \"%.0f\", ($RESULT_GB_SINGLE / 500) * 25}" 2>/dev/null)
-    [ "$geekbench_score" -gt 25 ] && geekbench_score=25
-  fi
+    local gb_tarball="${HABS_TMPDIR}/geekbench.tar.gz"
+    local gb_extract="${HABS_TMPDIR}/geekbench"
 
-  local total=$((cpu_score + mem_score + disk_score + net_score + geekbench_score))
+    # Download
+    _spinner_start "Downloading Geekbench 6 (~100 MB) ..."
+    local dl_result
+    dl_result=$(run_with_timeout 120 curl -sSL -o "$gb_tarball" "$gb_url" 2>&1 || true)
+    _spinner_stop
 
-  local grade="F"
-  if   [ "$total" -ge 97 ]; then grade="A+"
-  elif [ "$total" -ge 90 ]; then grade="A"
-  elif [ "$total" -ge 80 ]; then grade="A-"
-  elif [ "$total" -ge 70 ]; then grade="B+"
-  elif [ "$total" -ge 60 ]; then grade="B"
-  elif [ "$total" -ge 50 ]; then grade="B-"
-  elif [ "$total" -ge 40 ]; then grade="C+"
-  elif [ "$total" -ge 30 ]; then grade="C"
-  elif [ "$total" -ge 20 ]; then grade="D"
-  fi
+    if [[ ! -f "$gb_tarball" ]] || [[ ! -s "$gb_tarball" ]]; then
+        _fail "Failed to download Geekbench 6. Check internet connectivity."
+        _print_section_footer
+        return 1
+    fi
+    _ok "Downloaded Geekbench 6"
 
-  echo "${total}|${grade}|${cpu_score}|${mem_score}|${disk_score}|${net_score}|${geekbench_score}"
+    # Extract
+    _spinner_start "Extracting Geekbench 6 ..."
+    mkdir -p "$gb_extract"
+    tar xzf "$gb_tarball" -C "$gb_extract" 2>/dev/null || true
+    _spinner_stop
+
+    HABS_GEK_BIN=$(find "$gb_extract" -name 'geekbench6' -type f 2>/dev/null | head -1)
+    if [[ -z "$HABS_GEK_BIN" ]]; then
+        HABS_GEK_BIN=$(find "$gb_extract" -name 'geekbench' -type f 2>/dev/null | head -1)
+    fi
+
+    if [[ -z "$HABS_GEK_BIN" ]] || [[ ! -x "$HABS_GEK_BIN" ]]; then
+        _fail "Geekbench 6 binary not found after extraction"
+        _print_section_footer
+        return 1
+    fi
+    _ok "Extracted Geekbench 6"
+
+    # Run
+    _print_empty
+    _print_line "${C_DIM}Geekbench 6 typically takes 5–10 minutes to complete.${C_RESET}"
+    _print_line "${C_DIM}Results are uploaded to the Geekbench Browser automatically.${C_RESET}"
+    _print_empty
+
+    _spinner_start "Running Geekbench 6 (this may take a while) ..."
+    local gb_out
+    gb_out=$(run_with_timeout 900 "$HABS_GEK_BIN" 2>/dev/null || true)
+    _spinner_stop
+
+    local single_score=0 multi_score=0
+    single_score=$(echo "$gb_out" | grep -oP 'Single-Core Score:\s*\K[0-9]+' | head -1 || echo '0')
+    multi_score=$(echo "$gb_out" | grep -oP 'Multi-Core Score:\s*\K[0-9]+' | head -1 || echo '0')
+
+    # Also try to parse JSON result file
+    local gb_json
+    gb_json=$(find "$gb_extract" -name '*.json' -path '*/results/*' 2>/dev/null | head -1)
+    if [[ -z "$gb_json" ]]; then
+        gb_json=$(find "$HOME/.Geekbench6" -name '*.json' 2>/dev/null | head -1)
+    fi
+    if [[ -n "$gb_json" ]] && [[ -f "$gb_json" ]]; then
+        local js_single js_multi
+        js_single=$(grep -oP '"score":\s*\K[0-9]+' "$gb_json" | head -1 || echo '')
+        js_multi=$(grep -oP '"score":\s*\K[0-9]+' "$gb_json" | tail -1 || echo '')
+        [[ -n "$js_single" ]] && single_score=$js_single
+        [[ -n "$js_multi" ]] && multi_score=$js_multi
+    fi
+
+    if [[ $single_score -eq 0 ]] && [[ $multi_score -eq 0 ]]; then
+        _fail "Failed to parse Geekbench 6 results"
+        _print_line "Raw output:"
+        echo "$gb_out" | head -20
+    else
+        _print_empty
+        _print_kv_b 'Single-Core Score'  "${single_score}"
+        _print_kv_b 'Multi-Core Score'   "${multi_score}"
+    fi
+
+    # Clean up binary to save space
+    rm -rf "$gb_extract" 2>/dev/null || true
+
+    _print_section_footer
+
+    HABS_RESULTS[geekbench_single]=$single_score
+    HABS_RESULTS[geekbench_multi]=$multi_score
 }
 
-print_results() {
-  local data
-  data=$(calculate_score)
-  IFS='|' read -r total grade cpu_score mem_score disk_score net_score gb_score <<< "$data"
+# =============================================================================
+#  BENCHMARK: y-cruncher
+# =============================================================================
 
-  section_start "Results"
+bench_ycruncher() {
+    _info "Running y-cruncher benchmark..."
 
-  local grade_color="$C_GREEN"
-  case "$grade" in
-    A+|A|A-) grade_color="$C_GREEN"  ;;
-    B+|B|B-) grade_color="$C_CYAN"   ;;
-    C+|C)    grade_color="$C_YELLOW" ;;
-    D|F)     grade_color="$C_RED"    ;;
-  esac
+    _print_section_header 'y-cruncher (Pi Calculation)'
 
-  printf "  %-18s %s\n" " CPU Score"     ": ${cpu_score}/25"
-  printf "  %-18s %s\n" " Memory Score"  ": ${mem_score}/25"
-  printf "  %-18s %s\n" " Disk Score"    ": ${disk_score}/25"
-  printf "  %-18s %s\n" " Network Score" ": ${net_score}/25"
-  if [ "$(awk "BEGIN {print ($gb_score > 0)}")" -eq 1 ]; then
-    printf "  %-18s %s\n" " Geekbench Score" ": ${gb_score}/25"
-  fi
-  echo ""
-  printf "  ${C_BOLD}%-18s${C_RESET} %s\n" " Total Score"  ": ${total}/100"
-  printf "  ${C_BOLD}%-18s${C_RESET} ${grade_color}${C_BOLD}%s${C_RESET}\n" " Grade"        ": ${grade}"
-  echo ""
+    _ensure_tmpdir
 
-  local now duration
-  now=$(date +%s)
-  duration=$((now - START_TIME))
-  echo -e "  ${C_DIM}Benchmark completed in $(format_duration $duration)${C_RESET}"
+    local arch
+    arch=$(get_arch)
+    local yc_url='' yc_file=''
 
-  section_end
-  echo ""
+    if [[ $arch == 'x86_64' ]]; then
+        yc_url='https://y-cruncher.com/downloads/y-cruncher%20v0.8.6.9547-linux-x64.tar.gz'
+        yc_file='y-cruncher v0.8.6.9547-linux-x64.tar.gz'
+    elif [[ $arch == 'aarch64' ]]; then
+        yc_url='https://y-cruncher.com/downloads/y-cruncher%20v0.8.6.9547-linux-arm64.tar.gz'
+        yc_file='y-cruncher v0.8.6.9547-linux-arm64.tar.gz'
+    else
+        _print_line "${C_RED}Unsupported architecture for y-cruncher: ${arch}${C_RESET}"
+        _print_section_footer
+        return 1
+    fi
+
+    local yc_tarball="${HABS_TMPDIR}/y-cruncher.tar.gz"
+    local yc_dir="${HABS_TMPDIR}/y-cruncher"
+
+    # Download
+    _spinner_start "Downloading y-cruncher ..."
+    local dl_result
+    dl_result=$(run_with_timeout 60 curl -sSL -o "$yc_tarball" "$yc_url" 2>&1 || true)
+    _spinner_stop
+
+    if [[ ! -f "$yc_tarball" ]] || [[ ! -s "$yc_tarball" ]]; then
+        _fail "Failed to download y-cruncher"
+        _print_section_footer
+        return 1
+    fi
+    _ok "Downloaded y-cruncher"
+
+    # Extract
+    _spinner_start "Extracting y-cruncher ..."
+    mkdir -p "$yc_dir"
+    tar xzf "$yc_tarball" -C "$yc_dir" 2>/dev/null || true
+    _spinner_stop
+
+    HABS_YC_BIN=$(find "$yc_dir" -name 'y-cruncher' -type f 2>/dev/null | head -1)
+    if [[ -z "$HABS_YC_BIN" ]]; then
+        _fail "y-cruncher binary not found after extraction"
+        _print_section_footer
+        return 1
+    fi
+    chmod +x "$HABS_YC_BIN" 2>/dev/null || true
+    _ok "Extracted y-cruncher"
+
+    # Determine digit count based on mode
+    local digits=1000
+    if [[ $HABS_QUICK -eq 1 ]]; then
+        digits=500
+    elif [[ $HABS_FULL -eq 1 ]]; then
+        digits=5000
+    fi
+
+    _print_empty
+    _print_line "${C_DIM}Calculating ${digits} million digits of Pi...${C_RESET}"
+    _print_empty
+
+    # Run y-cruncher
+    _spinner_start "y-cruncher (${digits}M digits) ..."
+    # y-cruncher runs in its own directory (needs write access for temp files)
+    local yc_workdir="${yc_dir}/work"
+    mkdir -p "$yc_workdir"
+    local yc_out
+    yc_out=$(cd "$yc_workdir" && run_with_timeout 600 "$HABS_YC_BIN" binary "$digits" 2>&1 || true)
+    _spinner_stop
+
+    local comp_time=0
+    comp_time=$(echo "$yc_out" | grep -oP 'Total Computation Time:\s*\K[0-9.]+' | head -1 || echo '0')
+    [[ -z "$comp_time" ]] && comp_time=0
+
+    if [[ $(echo "$comp_time == 0" | bc -l) == 1 ]]; then
+        comp_time=$(echo "$yc_out" | grep -oP 'Computation\s*:\s*\K[0-9.]+' | head -1 || echo '0')
+    fi
+
+    _print_kv 'Digits'          "${digits}M" "${C_GREEN}"
+    _print_kv 'Compute Time'    "${comp_time} seconds" "${C_GREEN}"
+
+    # Cleanup
+    rm -rf "$yc_dir" 2>/dev/null || true
+
+    _print_section_footer
+
+    HABS_RESULTS[ycruncher_digits]=$digits
+    HABS_RESULTS[ycruncher_time]=$comp_time
 }
 
-# ============================================================
-# JSON OUTPUT
-# ============================================================
+# =============================================================================
+#  BENCHMARK: UnixBench (byte-unixbench)
+# =============================================================================
 
-generate_json() {
-  local data
-  data=$(calculate_score)
-  IFS='|' read -r total grade cpu_score mem_score disk_score net_score gb_score <<< "$data"
+bench_unixbench() {
+    _info "Running UnixBench (byte-unixbench)..."
 
-  local now duration
-  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
-  duration=$(( $(date +%s) - START_TIME ))
+    _print_section_header 'UnixBench (byte-unixbench)'
 
-  cat <<JSONEOF
-{
-  "tool": "HABS",
-  "version": "${VERSION}",
-  "timestamp": "${now}",
-  "duration_seconds": ${duration},
-  "system": {
-    "hostname": "${SYS_HOSTNAME}",
-    "os": "${SYS_OS}",
-    "kernel": "${SYS_KERNEL}",
-    "architecture": "${SYS_ARCH}",
-    "uptime": "${SYS_UPTIME}",
-    "cpu": {
-      "model": "${SYS_CPU_MODEL}",
-      "cores": ${SYS_CPU_CORES},
-      "threads": ${SYS_CPU_THREADS},
-      "frequency": "${SYS_CPU_FREQ}",
-      "cache": "${SYS_CPU_CACHE}"
-    },
-    "memory": {
-      "total_bytes": ${SYS_RAM_TOTAL},
-      "used_bytes": ${SYS_RAM_USED},
-      "available_bytes": ${SYS_RAM_AVAIL},
-      "swap_bytes": ${SYS_SWAP_TOTAL}
-    },
-    "disk": {
-      "total": "${SYS_DISK_TOTAL}",
-      "used": "${SYS_DISK_USED}",
-      "available": "${SYS_DISK_AVAIL}",
-      "filesystem": "${SYS_DISK_FSTYPE}",
-      "mount": "${SYS_DISK_MOUNT}"
-    },
-    "virtualization": "${SYS_VIRT}",
-    "load_average": "${SYS_LOAD}"
-  },
-  "benchmarks": {
-    "cpu": {
-      "single_events_per_sec": ${RESULT_CPU_SINGLE},
-      "multi_events_per_sec": ${RESULT_CPU_MULTI}
-    },
-    "memory": {
-      "read_mib_per_sec": ${RESULT_MEM_READ},
-      "write_mib_per_sec": ${RESULT_MEM_WRITE}
-    },
-    "disk": {
-      "4k_write_mb_per_sec": ${RESULT_DISK_4K_WRITE},
-      "4k_read_mb_per_sec": ${RESULT_DISK_4K_READ},
-      "1m_write_mb_per_sec": ${RESULT_DISK_1M_WRITE},
-      "1m_read_mb_per_sec": ${RESULT_DISK_1M_READ}
-    },
-    "network": {
-      "download_mbps": ${RESULT_NET_DOWNLOAD},
-      "upload_mbps": ${RESULT_NET_UPLOAD},
-      "avg_latency_ms": ${RESULT_NET_LATENCY}
-    },
-    "geekbench_6": {
-      "single_core_score": ${RESULT_GB_SINGLE},
-      "multi_core_score": ${RESULT_GB_MULTI}
-    },
-    "advanced": {
-      "cpu": {
-        "matrix_bogo_ops": ${RESULT_ADV_CPU_MATRIX},
-        "fpu_bogo_ops": ${RESULT_ADV_CPU_FPU},
-        "crypto_bogo_ops": ${RESULT_ADV_CPU_CRYPT},
-        "cache_bogo_ops": ${RESULT_ADV_CPU_CACHE}
-      },
-      "memory": {
-        "256b_read_mib_per_sec": ${RESULT_ADV_MEM_256B},
-        "4k_read_mib_per_sec": ${RESULT_ADV_MEM_4K},
-        "64k_read_mib_per_sec": ${RESULT_ADV_MEM_64K},
-        "1m_read_mib_per_sec": ${RESULT_ADV_MEM_1M}
-      },
-      "disk": {
-        "fio_random_4k_read_iops": ${RESULT_ADV_FIO_RND_R_IOPS},
-        "fio_random_4k_write_iops": ${RESULT_ADV_FIO_RND_W_IOPS},
-        "fio_random_4k_read_lat_us": ${RESULT_ADV_FIO_RND_R_LAT},
-        "fio_random_4k_write_lat_us": ${RESULT_ADV_FIO_RND_W_LAT},
-        "ioping_latency_ms": ${RESULT_ADV_IOPING_LAT}
-      },
-      "network": {
-        "ipv6_download_mbps": ${RESULT_ADV_NET_IPV6},
-        "packet_loss_pct": ${RESULT_ADV_NET_PLOSS},
-        "traceroute_hops": ${RESULT_ADV_NET_HOPS}
-      }
-    }
-  },
-  "scores": {
-    "cpu": ${cpu_score},
-    "memory": ${mem_score},
-    "disk": ${disk_score},
-    "network": ${net_score},
-    "geekbench": ${gb_score},
-    "total": ${total},
-    "max": 100,
-    "grade": "${grade}"
-  }
-}
-JSONEOF
+    # Check build dependencies
+    local missing_deps=0
+    for cmd in gcc make perl; do
+        if ! check_command "$cmd"; then
+            _print_line "${C_RED}Missing required tool: ${cmd}${C_RESET}"
+            missing_deps=1
+        fi
+    done
+
+    if [[ $missing_deps -eq 1 ]]; then
+        _skip "UnixBench requires gcc, make, and perl — skipping"
+        _print_section_footer
+        return 1
+    fi
+
+    _ensure_tmpdir
+
+    local ub_dir="${HABS_TMPDIR}/byte-unixbench"
+
+    # Download
+    _spinner_start "Downloading UnixBench source ..."
+    run_with_timeout 60 curl -sSL 'https://github.com/kdlucas/byte-unixbench/archive/master.tar.gz' -o "${HABS_TMPDIR}/unixbench.tar.gz" 2>/dev/null || true
+    _spinner_stop
+
+    if [[ ! -f "${HABS_TMPDIR}/unixbench.tar.gz" ]]; then
+        _fail "Failed to download UnixBench"
+        _print_section_footer
+        return 1
+    fi
+    _ok "Downloaded UnixBench"
+
+    # Extract
+    _spinner_start "Extracting UnixBench ..."
+    mkdir -p "$ub_dir"
+    tar xzf "${HABS_TMPDIR}/unixbench.tar.gz" -C "$ub_dir" 2>/dev/null || true
+    _spinner_stop
+
+    # Find the source directory (might be byte-unixbench-master)
+    local ub_src
+    ub_src=$(find "$ub_dir" -maxdepth 2 -name 'Run' -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null || echo '')
+    if [[ -z "$ub_src" ]]; then
+        ub_src=$(find "$ub_dir" -maxdepth 2 -name 'Makefile' -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null || echo '')
+    fi
+    if [[ -z "$ub_src" ]]; then
+        ub_src="$ub_dir/byte-unixbench-master/UnixBench"
+    fi
+
+    if [[ ! -d "$ub_src" ]]; then
+        _fail "UnixBench source directory not found"
+        _print_section_footer
+        return 1
+    fi
+    _ok "Extracted UnixBench"
+
+    # Build
+    _spinner_start "Compiling UnixBench ..."
+    local build_out
+    build_out=$(make -C "$ub_src" -s 2>&1 || true)
+    _spinner_stop
+
+    if [[ ! -f "$ub_src/pgms/dhry2" ]]; then
+        _fail "UnixBench compilation failed"
+        _print_section_footer
+        return 1
+    fi
+    _ok "Compiled UnixBench"
+
+    # Run selected tests (run a subset to save time)
+    _print_empty
+    _print_line "${C_DIM}Running UnixBench core tests (this may take a few minutes)...${C_RESET}"
+    _print_empty
+
+    # Run just the core tests (skip graphics)
+    _spinner_start "UnixBench benchmark run ..."
+    local ub_out
+    ub_out=$(run_with_timeout 600 perl "$ub_src/Run" -c 1 -i 1 2>&1 || true)
+    _spinner_stop
+
+    # Parse only the combined System Benchmarks Index Score
+    local ub_index=0
+    ub_index=$(echo "$ub_out" | grep 'System Benchmarks Index Score' | awk '{print $NF}' | head -1 || echo '0')
+
+    _print_kv_b 'Index Score'     "$(fmt_number $ub_index 0)"
+
+    # Cleanup
+    rm -rf "$ub_dir" 2>/dev/null || true
+
+    _print_section_footer
+
+    HABS_RESULTS[unixbench_index]=$ub_index
 }
 
-# ============================================================
-# HELP
-# ============================================================
+# =============================================================================
+#  SCORING SYSTEM
+# =============================================================================
 
-print_help() {
-  cat <<HELPEOF
-HABS v${VERSION} - Hyper Absolute Benchmark Script
-Modern Linux benchmark tool with Geekbench 6 & advanced benchmarks
+get_letter_grade() {
+    local score=$1
+    if (( $(echo "$score >= 97" | bc -l) )); then echo 'A+'
+    elif (( $(echo "$score >= 90" | bc -l) )); then echo 'A'
+    elif (( $(echo "$score >= 80" | bc -l) )); then echo 'A-'
+    elif (( $(echo "$score >= 70" | bc -l) )); then echo 'B+'
+    elif (( $(echo "$score >= 60" | bc -l) )); then echo 'B'
+    elif (( $(echo "$score >= 50" | bc -l) )); then echo 'B-'
+    elif (( $(echo "$score >= 40" | bc -l) )); then echo 'C+'
+    elif (( $(echo "$score >= 30" | bc -l) )); then echo 'C'
+    elif (( $(echo "$score >= 20" | bc -l) )); then echo 'D'
+    else echo 'F'
+    fi
+}
+
+calculate_scores() {
+    _info "Calculating scores..."
+
+    # Baselines (normalization targets)
+    local cpu_baseline=100      # 100 events/s single-thread = 25 pts
+    local mem_baseline=2000     # 2000 MiB/s read = 25 pts
+    local disk_baseline=500     # 500 MB/s avg (1M r/w) = 25 pts
+    local net_baseline=500      # 500 Mbps download = 25 pts
+    local gb_baseline=500       # 500 single-core score = 25 pts
+
+    local cpu_score=0 mem_score=0 disk_score=0 net_score=0 gb_score=0
+
+    # CPU score
+    local single_eps=${HABS_RESULTS[cpu_single_eps]:-0}
+    if [[ $(echo "$single_eps > 0" | bc -l) == 1 ]]; then
+        cpu_score=$(echo "scale=2; ($single_eps / $cpu_baseline) * 25" | bc -l 2>/dev/null || echo 0)
+    fi
+    # Cap at 25
+    cpu_score=$(echo "scale=2; if ($cpu_score > 25) 25 else $cpu_score" | bc -l 2>/dev/null || echo 0)
+
+    # Memory score
+    local mem_read=${HABS_RESULTS[mem_read_mbs]:-0}
+    if [[ $(echo "$mem_read > 0" | bc -l) == 1 ]]; then
+        mem_score=$(echo "scale=2; ($mem_read / $mem_baseline) * 25" | bc -l 2>/dev/null || echo 0)
+    fi
+    mem_score=$(echo "scale=2; if ($mem_score > 25) 25 else $mem_score" | bc -l 2>/dev/null || echo 0)
+
+    # Disk score (average of 1M read and write)
+    local disk_1mr=${HABS_RESULTS[disk_1m_read_mbs]:-0}
+    local disk_1mw=${HABS_RESULTS[disk_1m_write_mbs]:-0}
+    local disk_avg=0
+    if [[ $(echo "$disk_1mr > 0" | bc -l) == 1 ]] || [[ $(echo "$disk_1mw > 0" | bc -l) == 1 ]]; then
+        disk_avg=$(echo "scale=2; ($disk_1mr + $disk_1mw) / 2" | bc -l 2>/dev/null || echo 0)
+        disk_score=$(echo "scale=2; ($disk_avg / $disk_baseline) * 25" | bc -l 2>/dev/null || echo 0)
+    fi
+    disk_score=$(echo "scale=2; if ($disk_score > 25) 25 else $disk_score" | bc -l 2>/dev/null || echo 0)
+
+    # Network score
+    local net_dl=${HABS_RESULTS[net_download_mbps]:-0}
+    if [[ $(echo "$net_dl > 0" | bc -l) == 1 ]]; then
+        net_score=$(echo "scale=2; ($net_dl / $net_baseline) * 25" | bc -l 2>/dev/null || echo 0)
+    fi
+    net_score=$(echo "scale=2; if ($net_score > 25) 25 else $net_score" | bc -l 2>/dev/null || echo 0)
+
+    # Geekbench score
+    local gb_single=${HABS_RESULTS[geekbench_single]:-0}
+    if [[ $(echo "$gb_single > 0" | bc -l) == 1 ]]; then
+        gb_score=$(echo "scale=2; ($gb_single / $gb_baseline) * 25" | bc -l 2>/dev/null || echo 0)
+    fi
+    gb_score=$(echo "scale=2; if ($gb_score > 25) 25 else $gb_score" | bc -l 2>/dev/null || echo 0)
+
+    # Total (max 125, normalized to 100)
+    local raw_total
+    raw_total=$(echo "scale=2; $cpu_score + $mem_score + $disk_score + $net_score + $gb_score" | bc -l 2>/dev/null || echo 0)
+    # Normalize: max possible is 125, normalize to 100
+    local total=0
+    if [[ $(echo "$raw_total > 0" | bc -l) == 1 ]]; then
+        total=$(echo "scale=2; ($raw_total / 125) * 100" | bc -l 2>/dev/null || echo 0)
+    fi
+
+    # Round to nearest integer
+    total=$(echo "scale=0; ($total + 0.5) / 1" | bc -l 2>/dev/null || echo 0)
+
+    local grade
+    grade=$(get_letter_grade "$total")
+
+    HABS_SCORES[cpu]=$(echo "scale=2; $cpu_score / 1" | bc -l 2>/dev/null || echo 0)
+    HABS_SCORES[memory]=$(echo "scale=2; $mem_score / 1" | bc -l 2>/dev/null || echo 0)
+    HABS_SCORES[disk]=$(echo "scale=2; $disk_score / 1" | bc -l 2>/dev/null || echo 0)
+    HABS_SCORES[network]=$(echo "scale=2; $net_score / 1" | bc -l 2>/dev/null || echo 0)
+    HABS_SCORES[geekbench]=$(echo "scale=2; $gb_score / 1" | bc -l 2>/dev/null || echo 0)
+    HABS_SCORES[total]="$total"
+    HABS_SCORES[grade]="$grade"
+
+    # Store in results for JSON
+    HABS_RESULTS[score_cpu]=${HABS_SCORES[cpu]}
+    HABS_RESULTS[score_memory]=${HABS_SCORES[memory]}
+    HABS_RESULTS[score_disk]=${HABS_SCORES[disk]}
+    HABS_RESULTS[score_network]=${HABS_SCORES[network]}
+    HABS_RESULTS[score_geekbench]=${HABS_SCORES[geekbench]}
+    HABS_RESULTS[score_total]=$total
+    HABS_RESULTS[score_grade]="$grade"
+}
+
+display_scores() {
+    _print_section_header 'Results'
+
+    local cpu_pretty=$(printf "%.1f" "${HABS_SCORES[cpu]}")
+    local mem_pretty=$(printf "%.1f" "${HABS_SCORES[memory]}")
+    local disk_pretty=$(printf "%.1f" "${HABS_SCORES[disk]}")
+    local net_pretty=$(printf "%.1f" "${HABS_SCORES[network]}")
+    local gb_pretty=$(printf "%.1f" "${HABS_SCORES[geekbench]}")
+    local total=${HABS_SCORES[total]}
+    local grade=${HABS_SCORES[grade]}
+
+    # Color the grade
+    local grade_color=$C_GREEN
+    case $grade in
+        A|A+) grade_color=$C_GREEN ;;
+        A-|B+) grade_color=$C_CYAN ;;
+        B|B-) grade_color=$C_YELLOW ;;
+        C+)    grade_color=$C_ORANGE ;;
+        C|D)   grade_color=$C_RED ;;
+        F)     grade_color=$C_RED ;;
+    esac
+
+    _print_kv 'CPU Score'      "${cpu_pretty}/25" "${C_BLUE}"
+    _print_kv 'Memory Score'   "${mem_pretty}/25" "${C_BLUE}"
+    _print_kv 'Disk Score'     "${disk_pretty}/25" "${C_BLUE}"
+    _print_kv 'Network Score'  "${net_pretty}/25" "${C_BLUE}"
+    _print_kv 'Geekbench Score' "${gb_pretty}/25" "${C_BLUE}"
+    _print_empty
+
+    local duration=$(( HABS_END_TIME - HABS_START_TIME ))
+    _print_kv_b 'Total Score'  "${total}/100"
+    _print_kv 'Grade'          "${grade}" "${grade_color}"
+    _print_empty
+    _print_kv 'Duration'       "$(fmt_duration $duration)" "${C_GREY}"
+
+    _print_section_footer
+}
+
+# =============================================================================
+#  JSON EXPORT
+# =============================================================================
+
+build_json() {
+    local json=''
+    local ts
+    ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo 'unknown')
+
+    json+=$'{\n'
+    json+="  \"tool\": \"${HABS_NAME}\","$'\n'
+    json+="  \"version\": \"${HABS_VERSION}\","$'\n'
+    json+="  \"url\": \"${HABS_URL}\","$'\n'
+    json+="  \"timestamp\": \"${ts}\","$'\n'
+    json+=$'  "system": {\n'
+    json+="$(json_kv 'hostname'           "${HABS_SYSINFO[hostname]}" true)"$'\n'
+    json+="$(json_kv 'os'                 "${HABS_SYSINFO[os]}" true)"$'\n'
+    json+="$(json_kv 'kernel'             "${HABS_SYSINFO[kernel]}" true)"$'\n'
+    json+="$(json_kv 'architecture'       "${HABS_SYSINFO[arch]}" true)"$'\n'
+    json+="$(json_kv 'virtualization'     "${HABS_SYSINFO[virtualization]}" true)"$'\n'
+    json+="$(json_kv 'uptime_seconds'     "${HABS_SYSINFO[uptime_seconds]}" true)"$'\n'
+    json+=$'    "cpu": {\n'
+    json+="$(json_kv 'model'              "${HABS_SYSINFO[cpu_model]}" true)"$'\n'
+    json+="$(json_kv 'physical_cores'     "${HABS_SYSINFO[cpu_physical]}" true)"$'\n'
+    json+="$(json_kv 'logical_cores'      "${HABS_SYSINFO[cpu_cores]}" true)"$'\n'
+    json+="$(json_kv 'frequency_ghz'      "${HABS_SYSINFO[cpu_freq]}" true)"$'\n'
+    json+="$(json_kv 'l1d_cache'          "${HABS_SYSINFO[cpu_cache_l1d]:-null}" true)"$'\n'
+    json+="$(json_kv 'l2_cache'           "${HABS_SYSINFO[cpu_cache_l2]:-null}" true)"$'\n'
+    json+="$(json_kv 'l3_cache'           "${HABS_SYSINFO[cpu_cache_l3]:-null}" true)"$'\n'
+    json+="$(json_kv 'has_aes'            "${HABS_SYSINFO[has_aes]}" true)"$'\n'
+    json+="$(json_kv 'has_avx'            "${HABS_SYSINFO[has_avx]}" true)"$'\n'
+    json+="$(json_kv 'has_avx2'           "${HABS_SYSINFO[has_avx2]}" true)"$'\n'
+    json+="$(json_kv 'has_avx512'         "${HABS_SYSINFO[has_avx512]}" true)"$'\n'
+    json+="$(json_kv 'has_sse4_2'         "${HABS_SYSINFO[has_sse4_2]}" true)"$'\n'
+    json+="$(json_kv 'has_neon'           "${HABS_SYSINFO[has_neon]}" true)"$'\n'
+    json+="$(json_kv 'has_sve'            "${HABS_SYSINFO[has_sve]}" false)"$'\n'
+    json+=$'    },\n'
+    json+=$'    "memory": {\n'
+    json+="$(json_kv 'ram_total_bytes'    "${HABS_SYSINFO[ram_total]}" true)"$'\n'
+    json+="$(json_kv 'ram_used_bytes'     "${HABS_SYSINFO[ram_used]}" true)"$'\n'
+    json+="$(json_kv 'ram_available_bytes'  "${HABS_SYSINFO[ram_available]}" true)"$'\n'
+    json+="$(json_kv 'swap_total_bytes'   "${HABS_SYSINFO[swap_total]}" true)"$'\n'
+    json+="$(json_kv 'swap_used_bytes'    "${HABS_SYSINFO[swap_used]}" true)"$'\n'
+    json+="$(json_kv 'swap_free_bytes'    "${HABS_SYSINFO[swap_free]}" false)"$'\n'
+    json+=$'    },\n'
+    json+=$'    "storage": {\n'
+    json+="$(json_kv 'disk_total_bytes'   "${HABS_SYSINFO[disk_total]}" true)"$'\n'
+    json+="$(json_kv 'disk_used_bytes'    "${HABS_SYSINFO[disk_used]}" true)"$'\n'
+    json+="$(json_kv 'disk_avail_bytes'   "${HABS_SYSINFO[disk_avail]}" true)"$'\n'
+    json+="$(json_kv 'disk_usage_pct'     "${HABS_SYSINFO[disk_usage_pct]}" true)"$'\n'
+    json+="$(json_kv 'filesystem'         "${HABS_SYSINFO[filesystem]}" true)"$'\n'
+    json+="$(json_kv 'mount_options'      "${HABS_SYSINFO[mount_options]}" false)"$'\n'
+    json+=$'    },\n'
+    json+=$'    "network": {\n'
+    json+="$(json_kv 'ipv4'               "${HABS_SYSINFO[ipv4]:-null}" true)"$'\n'
+    json+="$(json_kv 'ipv6'               "${HABS_SYSINFO[ipv6]:-null}" true)"$'\n'
+    json+="$(json_kv 'interfaces'         "${HABS_SYSINFO[interfaces]:-null}" false)"$'\n'
+    json+=$'    },\n'
+    json+=$'    "load": {\n'
+    json+="$(json_kv 'load_1'             "${HABS_SYSINFO[load_1]:-0}" true)"$'\n'
+    json+="$(json_kv 'load_5'             "${HABS_SYSINFO[load_5]:-0}" true)"$'\n'
+    json+="$(json_kv 'load_15'            "${HABS_SYSINFO[load_15]:-0}" false)"$'\n'
+    json+=$'    }\n'
+    json+=$'  },\n'
+
+    # Duration
+    local duration=$(( HABS_END_TIME - HABS_START_TIME ))
+    json+="  \"duration_seconds\": ${duration},"$'\n'
+
+    # Benchmarks
+    json+=$'  "benchmarks": {\n'
+
+    # CPU
+    json+=$'    "cpu": {\n'
+    json+="$(json_kv 'single_events_per_sec'  "${HABS_RESULTS[cpu_single_eps]:-0}" true)"$'\n'
+    json+="$(json_kv 'multi_events_per_sec'   "${HABS_RESULTS[cpu_multi_eps]:-0}" true)"$'\n'
+    json+="$(json_kv 'scaling_ratio'          "${HABS_RESULTS[cpu_scaling]:-0}" true)"$'\n'
+    json+="$(json_kv 'threads'                "${HABS_RESULTS[cpu_threads]:-0}" true)"$'\n'
+    json+="$(json_kv 'max_prime'              "${HABS_RESULTS[cpu_max_prime]:-0}" false)"$'\n'
+    json+=$'    },\n'
+
+    # Memory
+    json+=$'    "memory": {\n'
+    json+="$(json_kv 'read_mib_per_sec'   "${HABS_RESULTS[mem_read_mbs]:-0}" true)"$'\n'
+    json+="$(json_kv 'write_mib_per_sec'  "${HABS_RESULTS[mem_write_mbs]:-0}" false)"$'\n'
+    json+=$'    },\n'
+
+    # Disk
+    json+=$'    "disk": {\n'
+    json+="$(json_kv '1m_write_mb_per_sec'  "${HABS_RESULTS[disk_1m_write_mbs]:-0}" true)"$'\n'
+    json+="$(json_kv '1m_read_mb_per_sec'   "${HABS_RESULTS[disk_1m_read_mbs]:-0}" true)"$'\n'
+    json+="$(json_kv '4k_write_mb_per_sec'  "${HABS_RESULTS[disk_4k_write_mbs]:-0}" true)"$'\n'
+    json+="$(json_kv '4k_read_mb_per_sec'   "${HABS_RESULTS[disk_4k_read_mbs]:-0}" true)"$'\n'
+    json+="$(json_kv '4k_write_iops'        "${HABS_RESULTS[disk_4k_write_iops]:-0}" true)"$'\n'
+    json+="$(json_kv '4k_read_iops'         "${HABS_RESULTS[disk_4k_read_iops]:-0}" false)"$'\n'
+    json+=$'    },\n'
+
+    # Network
+    json+=$'    "network": {\n'
+    json+="$(json_kv 'download_mbps'   "${HABS_RESULTS[net_download_mbps]:-0}" true)"$'\n'
+    json+="$(json_kv 'upload_mbps'     "${HABS_RESULTS[net_upload_mbps]:-0}" true)"$'\n'
+    json+="$(json_kv 'avg_latency_ms'  "${HABS_RESULTS[net_avg_latency]:-0}" true)"$'\n'
+    json+="$(json_kv 'best_server'     "${HABS_RESULTS[net_best_server]:-}" false)"$'\n'
+    json+=$'    },\n'
+
+    # Geekbench 6
+    json+=$'    "geekbench_6": {\n'
+    json+="$(json_kv 'single_core_score'  "${HABS_RESULTS[geekbench_single]:-0}" true)"$'\n'
+    json+="$(json_kv 'multi_core_score'   "${HABS_RESULTS[geekbench_multi]:-0}" false)"$'\n'
+    json+=$'    },\n'
+
+    # Advanced CPU
+    json+=$'    "advanced_cpu": {\n'
+    json+="$(json_kv 'matrix_bogo_ops'  "${HABS_RESULTS[adv_cpu_matrix]:-0}" true)"$'\n'
+    json+="$(json_kv 'fpu_bogo_ops'     "${HABS_RESULTS[adv_cpu_fpu]:-0}" true)"$'\n'
+    json+="$(json_kv 'crypto_bogo_ops'  "${HABS_RESULTS[adv_cpu_crypto]:-0}" true)"$'\n'
+    json+="$(json_kv 'cache_bogo_ops'   "${HABS_RESULTS[adv_cpu_cache]:-0}" false)"$'\n'
+    json+=$'    },\n'
+
+    # Advanced Memory
+    json+=$'    "advanced_memory": {\n'
+    json+="$(json_kv '256b_read_mib_per_sec'  "${HABS_RESULTS[adv_mem_256b]:-0}" true)"$'\n'
+    json+="$(json_kv '4k_read_mib_per_sec'    "${HABS_RESULTS[adv_mem_4k]:-0}" true)"$'\n'
+    json+="$(json_kv '64k_read_mib_per_sec'   "${HABS_RESULTS[adv_mem_64k]:-0}" true)"$'\n'
+    json+="$(json_kv '1m_read_mib_per_sec'    "${HABS_RESULTS[adv_mem_1m]:-0}" false)"$'\n'
+    json+=$'    },\n'
+
+    # Advanced Disk
+    json+=$'    "advanced_disk": {\n'
+    json+="$(json_kv 'fio_random_4k_read_iops'   "${HABS_RESULTS[adv_disk_fio_read_iops]:-0}" true)"$'\n'
+    json+="$(json_kv 'fio_random_4k_write_iops'  "${HABS_RESULTS[adv_disk_fio_write_iops]:-0}" true)"$'\n'
+    json+="$(json_kv 'fio_random_4k_read_lat_us'  "${HABS_RESULTS[adv_disk_fio_read_lat_us]:-0}" true)"$'\n'
+    json+="$(json_kv 'fio_random_4k_write_lat_us' "${HABS_RESULTS[adv_disk_fio_write_lat_us]:-0}" true)"$'\n'
+    json+="$(json_kv 'ioping_latency_ms'          "${HABS_RESULTS[adv_disk_ioping_lat_ms]:-0}" false)"$'\n'
+    json+=$'    },\n'
+
+    # Advanced Network
+    json+=$'    "advanced_network": {\n'
+    json+="$(json_kv 'ipv6_download_mbps'  "${HABS_RESULTS[adv_net_ipv6_mbps]:-0}" true)"$'\n'
+    json+="$(json_kv 'packet_loss_pct'     "${HABS_RESULTS[adv_net_packet_loss_pct]:-0}" true)"$'\n'
+    json+="$(json_kv 'traceroute_hops'     "${HABS_RESULTS[adv_net_traceroute_hops]:-0}" false)"$'\n'
+    json+=$'    },\n'
+
+    # y-cruncher
+    json+=$'    "y_cruncher": {\n'
+    json+="$(json_kv 'digits_millions'   "${HABS_RESULTS[ycruncher_digits]:-0}" true)"$'\n'
+    json+="$(json_kv 'compute_time_sec'  "${HABS_RESULTS[ycruncher_time]:-0}" false)"$'\n'
+    json+=$'    },\n'
+
+    # UnixBench (byte-unixbench) — combined index score only
+    json+=$'    "unixbench": {\n'
+    json+="$(json_kv 'index_score'       "${HABS_RESULTS[unixbench_index]:-0}" false)"$'\n'
+    json+=$'    }\n'
+
+    json+=$'  },\n'
+
+    # Scores
+    local total=${HABS_SCORES[total]:-0}
+    local grade=${HABS_SCORES[grade]:-F}
+    json+=$'  "scores": {\n'
+    json+="$(json_kv 'cpu'       "${HABS_SCORES[cpu]:-0}" true)"$'\n'
+    json+="$(json_kv 'memory'    "${HABS_SCORES[memory]:-0}" true)"$'\n'
+    json+="$(json_kv 'disk'      "${HABS_SCORES[disk]:-0}" true)"$'\n'
+    json+="$(json_kv 'network'   "${HABS_SCORES[network]:-0}" true)"$'\n'
+    json+="$(json_kv 'geekbench' "${HABS_SCORES[geekbench]:-0}" true)"$'\n'
+    json+="$(json_kv 'total'     "${total}" true)"$'\n'
+    json+="$(json_kv 'max'       "100" true)"$'\n'
+    json+="$(json_kv 'grade'     "${grade}" false)"$'\n'
+    json+=$'  }\n'
+    json+=$'}\n'
+
+    echo "$json"
+}
+
+output_json() {
+    local json
+    json=$(build_json)
+
+    if [[ -n "$HABS_OUTPUT_FILE" ]]; then
+        echo "$json" > "$HABS_OUTPUT_FILE"
+        _ok "Results saved to ${HABS_OUTPUT_FILE}"
+    fi
+
+    if [[ $HABS_JSON -eq 1 ]]; then
+        echo "$json"
+    fi
+}
+
+# =============================================================================
+#  MAIN ORCHESTRATOR
+# =============================================================================
+
+print_banner() {
+    local tw
+    tw=$(get_term_width)
+    local banner_width=60
+    [[ $tw -lt 66 ]] && banner_width=$((tw - 6))
+    local padding=$(( (tw - banner_width) / 2 - 2 ))
+    [[ $padding -lt 0 ]] && padding=0
+
+    local pad_str
+    pad_str=$(printf '%*s' "$padding" '')
+
+    echo ""
+    printf "%s${C_BOLD}${C_CYAN} ╔════════════════════════════════════════════════════════╗${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║                                                                ║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}██╗  ██╗ █████╗ ██████╗ ███████╗${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}██║  ██║██╔══██╗██╔══██╗██╔════╝${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}███████║███████║██████╔╝███████╗${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}██╔══██║██╔══██║██╔══██╗╚════██║${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}██║  ██║██║  ██║██████╔╝███████║${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_BOLD}${C_WHITE}╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║                                                                ║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_GREY}Hyper Absolute Benchmark Script${C_RESET}                      ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_GREY}Version ${HABS_VERSION}${C_RESET}                                        ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║${C_RESET}  ${C_GREY}${HABS_URL}${C_RESET}     ${C_BOLD}${C_CYAN}║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ║                                                                ║${C_RESET}\n" "$pad_str"
+    printf "%s${C_BOLD}${C_CYAN} ╚════════════════════════════════════════════════════════╝${C_RESET}\n" "$pad_str"
+    echo ""
+}
+
+print_config_banner() {
+    local skipped=''
+    [[ $HABS_SKIP_CPU -eq 1 ]] && skipped+=' cpu'
+    [[ $HABS_SKIP_MEMORY -eq 1 ]] && skipped+=' memory'
+    [[ $HABS_SKIP_DISK -eq 1 ]] && skipped+=' disk'
+    [[ $HABS_SKIP_NETWORK -eq 1 ]] && skipped+=' network'
+    [[ $HABS_SKIP_GEEKBENCH -eq 1 ]] && skipped+=' geekbench6'
+    [[ $HABS_SKIP_ADVANCED -eq 1 ]] && skipped+=' advanced'
+    [[ $HABS_SKIP_YCRUNCHER -eq 1 ]] && skipped+=' y-cruncher'
+    [[ $HABS_SKIP_UNIXBENCH -eq 1 ]] && skipped+=' unixbench'
+
+    local mode='standard'
+    [[ $HABS_QUICK -eq 1 ]] && mode='quick'
+    [[ $HABS_FULL -eq 1 ]] && mode='full'
+
+    _print_section_header 'Configuration'
+    _print_kv 'Mode'     "${mode}" "${C_CYAN}"
+    if [[ -n "$skipped" ]]; then
+        _print_kv 'Skipped' "${skipped}" "${C_YELLOW}"
+    else
+        _print_kv 'Skipped' 'none' "${C_GREEN}"
+    fi
+    _print_kv 'JSON'     "$([[ $HABS_JSON -eq 1 ]] && echo 'enabled' || echo 'disabled')" "${C_CYAN}"
+    _print_kv 'Output'   "${HABS_OUTPUT_FILE:-stdout}" "${C_CYAN}"
+    _print_section_footer
+    echo ""
+}
+
+print_header() {
+    print_banner
+    print_config_banner
+}
+
+print_footer() {
+    echo ""
+    _print_section_header 'Complete'
+    local duration=$(( HABS_END_TIME - HABS_START_TIME ))
+    _print_line "${C_GREEN}Benchmark suite completed in $(fmt_duration $duration).${C_RESET}"
+    _print_line "${C_GREY}${HABS_NAME} v${HABS_VERSION} — ${HABS_COPYRIGHT}${C_RESET}"
+    _print_section_footer
+    echo ""
+}
+
+show_help() {
+    cat <<EOF
+${C_BOLD}${HABS_NAME} — Hyper Absolute Benchmark Script v${HABS_VERSION}${C_RESET}
+${C_GREY}${HABS_URL}${C_RESET}
 
 Usage:  bash habs.sh [options]
 
 Options:
   -h, --help            Show this help message
-  --version             Show version
-  --skip-cpu            Skip CPU benchmark
-  --skip-memory         Skip memory benchmark
-  --skip-disk           Skip disk benchmark
-  --skip-network        Skip network benchmark
-  -q, --quick           Quick mode (shorter tests, less data)
-  -f, --full            Full mode (more comprehensive tests)
+  --version             Print version
+  --skip-cpu            Skip CPU benchmarks (standard + advanced)
+  --skip-memory         Skip memory benchmarks (standard + advanced)
+  --skip-disk           Skip disk benchmarks (standard + advanced)
+  --skip-network        Skip network benchmarks (standard + advanced)
+  --skip-geekbench      Skip Geekbench 6
+  --skip-advanced       Skip all advanced benchmarks
+  --skip-y-cruncher     Skip y-cruncher benchmark
+  --skip-unixbench      Skip UnixBench benchmark
+  --quick, -q           Quick mode — shorter tests
+  --full, -f            Full mode — comprehensive tests
   --json                Output results as JSON to stdout
-  --output FILE         Save text/JSON output to file
-  --no-color            Disable colored terminal output
-  -v, --verbose         Verbose/debug output
+  --output FILE         Save results to file
+  --no-color            Disable colored output
+  --verbose, -v         Enable verbose/debug output
 
 Examples:
-  bash habs.sh                              Run all benchmarks (default)
-  bash habs.sh --quick                      Quick benchmark run
-  bash habs.sh --skip-network               Skip network tests
-  bash habs.sh --skip-disk --skip-network   CPU/memory/Geekbench only
-  bash habs.sh --json --output result.json  JSON export
+  bash habs.sh                          Run all benchmarks
+  bash habs.sh --quick                  Quick overview
+  bash habs.sh --skip-network           Skip network tests
+  bash habs.sh --json --output results.json  Export JSON
+  bash habs.sh --skip-geekbench         Skip Geekbench 6
 
-Benchmarks (all enabled by default, use --skip-* to exclude):
-  CPU (standard):   sysbench (single + multi-threaded)
-  Memory (standard): sysbench (1M sequential read/write)
-  Disk (standard):  dd (4K + 1M direct I/O)
-  Network (standard): curl (multi-CDN) + ping + iperf3
-  Geekbench 6:     single-core & multi-core (real-world workloads)
-  CPU (advanced):  stress-ng (matrix, FPU, crypto, cache)
-  Memory (advanced): sysbench (multi-block read + cache hierarchy)
-  Disk (advanced): fio (random 4K QD=32) + ioping (latency)
-  Network (advanced): IPv6 download + packet loss + traceroute
-
-Requirements:
-  sysbench    CPU & memory benchmarks
-  curl        Network speed tests
-  dd          Disk I/O benchmarks
-  ping        Network latency tests
-  stress-ng   Advanced CPU benchmarks (auto-installed)
-  fio         Advanced disk benchmarks (auto-installed)
-  ioping      Disk latency test (manual install if needed)
-  iperf3      Upload test (optional)
-  python3     JSON parsing for fio & iperf3 (optional)
-
-HELPEOF
+${C_GREY}All benchmarks run by default. Use --skip-* to exclude.${C_RESET}
+EOF
 }
 
-# ============================================================
-# MAIN
-# ============================================================
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)           show_help; exit 0 ;;
+            --version)           echo "${HABS_NAME} v${HABS_VERSION}"; exit 0 ;;
+            --skip-cpu)          HABS_SKIP_CPU=1 ;;
+            --skip-memory)       HABS_SKIP_MEMORY=1 ;;
+            --skip-disk)         HABS_SKIP_DISK=1 ;;
+            --skip-network)      HABS_SKIP_NETWORK=1 ;;
+            --skip-geekbench)    HABS_SKIP_GEEKBENCH=1 ;;
+            --skip-advanced)     HABS_SKIP_ADVANCED=1 ;;
+            --skip-y-cruncher)   HABS_SKIP_YCRUNCHER=1 ;;
+            --skip-unixbench)    HABS_SKIP_UNIXBENCH=1 ;;
+            --quick|-q)          HABS_QUICK=1 ;;
+            --full|-f)           HABS_FULL=1 ;;
+            --json)              HABS_JSON=1 ;;
+            --output)            shift; HABS_OUTPUT_FILE="$1" ;;
+            --no-color)          HABS_NOCOLOR=1; _init_colors ;;
+            --verbose|-v)        HABS_VERBOSE=1 ;;
+            *)                   _error "Unknown option: $1"; show_help >&2; exit 1 ;;
+        esac
+        shift
+    done
+
+    # Quick and full are mutually exclusive
+    if [[ $HABS_QUICK -eq 1 ]] && [[ $HABS_FULL -eq 1 ]]; then
+        HABS_FULL=0  # Default to quick
+    fi
+}
 
 main() {
-  START_TIME=$(date +%s)
+    HABS_START_TIME=$(date +%s)
 
-  # Write permission check
-  if ! touch .habs_write_test 2>/dev/null; then
-    echo "No write permission in current directory. Switch to an owned directory." >&2
-    exit 1
-  fi
-  rm -f .habs_write_test
+    parse_args "$@"
+    _init_colors
 
-  # Pre-parse --no-color and --json for output control
-  for arg in "$@"; do
-    [ "$arg" = "--no-color" ] && CONFIG_NO_COLOR=true
-  done
-  setup_colors
-
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      -h|--help)       print_help; exit 0 ;;
-      --version)       echo "HABS v${VERSION}"; exit 0 ;;
-      --skip-cpu)      CONFIG_SKIP_CPU=true ;;
-      --skip-memory)   CONFIG_SKIP_MEMORY=true ;;
-      --skip-disk)     CONFIG_SKIP_DISK=true ;;
-      --skip-network)  CONFIG_SKIP_NETWORK=true ;;
-      # -a|--advanced and --geekbench are enabled by default
-      -q|--quick)      CONFIG_QUICK=true ;;
-      -f|--full)       CONFIG_FULL=true ;;
-      --json)          CONFIG_JSON=true ;;
-      --output)        shift; CONFIG_OUTPUT="${1:-}"; [ -n "$CONFIG_OUTPUT" ] || die "--output requires a file path" ;;
-      --no-color)      CONFIG_NO_COLOR=true ;;
-      -v|--verbose)    CONFIG_VERBOSE=true ;;
-      *) echo -e "${C_RED}Unknown: $1${C_RESET}"; print_help; exit 1 ;;
-    esac
-    shift
-  done
-
-  setup_signals
-
-  if [ -n "$CONFIG_OUTPUT" ] && [ "$CONFIG_JSON" = false ]; then
-    if command_exists stdbuf; then
-      exec > >(stdbuf -oL tee -a "$CONFIG_OUTPUT") 2>&1 || true
-    else
-      exec > >(tee -a "$CONFIG_OUTPUT") 2>&1 || true
+    # JSON-only mode: silence all stdout output except JSON itself
+    local json_silent=0
+    if [[ $HABS_JSON -eq 1 ]] && [[ -z "$HABS_OUTPUT_FILE" ]] && [[ $HABS_VERBOSE -eq 0 ]]; then
+        json_silent=1
+        exec 3>&1       # Save original stdout to fd 3
+        exec 1>/dev/null # Redirect all normal stdout to /dev/null
     fi
-  elif [ "$CONFIG_JSON" = false ] && [ -t 1 ] && command_exists stdbuf; then
-    exec > >(stdbuf -oL cat) || true
-  fi
 
-  if [ "$CONFIG_JSON" = false ]; then
-    print_header
-    echo -e "  ${C_DIM}$(date)${C_RESET}"
-    echo ""
-  fi
+    local show_output=0
+    [[ $json_silent -eq 0 ]] && show_output=1
 
-  gather_system_info
+    gather_system_info
 
-  if [ "$CONFIG_JSON" = false ]; then
-    print_system_info
-  fi
-
-  # In JSON mode, redirect all benchmark output to stderr so JSON stays clean
-  if [ "$CONFIG_JSON" = true ]; then
-    exec 3>&1
-    exec 1>&2
-  fi
-
-  # Standard benchmarks
-  [ "$CONFIG_SKIP_CPU" = false ]     && bench_cpu     || log_debug "Skipping CPU benchmark"
-  [ "$CONFIG_SKIP_MEMORY" = false ]  && bench_memory  || log_debug "Skipping memory benchmark"
-  [ "$CONFIG_SKIP_DISK" = false ]    && bench_disk    || log_debug "Skipping disk benchmark"
-  [ "$CONFIG_SKIP_NETWORK" = false ] && bench_network || log_debug "Skipping network benchmark"
-
-  # Geekbench 6 (skipped if --skip-cpu)
-  if [ "$CONFIG_GEEKBENCH" = true ] && [ "$CONFIG_SKIP_CPU" = false ]; then
-    bench_geekbench || log_warn "Geekbench 6 failed or was skipped"
-    cleanup_geekbench
-  elif [ "$CONFIG_GEEKBENCH" = true ] && [ "$CONFIG_SKIP_CPU" = true ]; then
-    log_debug "Skipping Geekbench 6 (--skip-cpu)"
-  fi
-
-  # Advanced benchmarks (respect --skip-* flags)
-  if [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_CPU" = false ]; then
-    bench_advanced_cpu      || log_debug "Advanced CPU skipped/failed"
-  elif [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_CPU" = true ]; then
-    log_debug "Skipping advanced CPU (--skip-cpu)"
-  fi
-  if [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_MEMORY" = false ]; then
-    bench_advanced_memory   || log_debug "Advanced memory skipped/failed"
-  elif [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_MEMORY" = true ]; then
-    log_debug "Skipping advanced memory (--skip-memory)"
-  fi
-  if [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_DISK" = false ]; then
-    bench_advanced_disk     || log_debug "Advanced disk skipped/failed"
-  elif [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_DISK" = true ]; then
-    log_debug "Skipping advanced disk (--skip-disk)"
-  fi
-  if [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_NETWORK" = false ]; then
-    bench_advanced_network  || log_debug "Advanced network skipped/failed"
-  elif [ "$CONFIG_ADVANCED" = true ] && [ "$CONFIG_SKIP_NETWORK" = true ]; then
-    log_debug "Skipping advanced network (--skip-network)"
-  fi
-
-  # Restore stdout for JSON output
-  if [ "$CONFIG_JSON" = true ]; then
-    exec 1>&3
-    exec 3>&-
-  fi
-
-  # Output
-  if [ "$CONFIG_JSON" = true ]; then
-    local json
-    json=$(generate_json)
-    if [ -n "$CONFIG_OUTPUT" ]; then
-      echo "$json" > "$CONFIG_OUTPUT"
-      log_success "JSON results saved to ${CONFIG_OUTPUT}"
-    else
-      echo "$json"
+    if [[ $show_output -eq 1 ]]; then
+        print_header
+        display_system_info
+        echo ""
     fi
-  else
-    print_results
-    local end_time=$(( $(date +%s) - START_TIME ))
-    echo -e "  ${C_DIM}Total time: $(format_duration $end_time)${C_RESET}"
-    echo ""
-  fi
 
-  cleanup
-  cleanup_geekbench
+    # Run benchmarks (each wrapped with || true to prevent set -e from aborting)
+    if [[ $HABS_SKIP_CPU -eq 0 ]]; then
+        [[ $show_output -eq 1 ]] && echo ""
+        bench_cpu || true
+    fi
+
+    if [[ $HABS_SKIP_MEMORY -eq 0 ]]; then
+        [[ $show_output -eq 1 ]] && echo ""
+        bench_memory || true
+    fi
+
+    if [[ $HABS_SKIP_DISK -eq 0 ]]; then
+        [[ $show_output -eq 1 ]] && echo ""
+        bench_disk || true
+    fi
+
+    if [[ $HABS_SKIP_NETWORK -eq 0 ]]; then
+        [[ $show_output -eq 1 ]] && echo ""
+        bench_network || true
+    fi
+
+    if [[ $HABS_SKIP_GEEKBENCH -eq 0 ]]; then
+        [[ $show_output -eq 1 ]] && echo ""
+        bench_geekbench6 || true
+    fi
+
+    if [[ $HABS_SKIP_ADVANCED -eq 0 ]]; then
+        [[ $show_output -eq 1 ]] && echo ""
+        bench_advanced_cpu || true
+
+        [[ $show_output -eq 1 ]] && echo ""
+        bench_advanced_memory || true
+
+        [[ $show_output -eq 1 ]] && echo ""
+        bench_advanced_disk || true
+
+        [[ $show_output -eq 1 ]] && echo ""
+        bench_advanced_network || true
+    fi
+
+    if [[ $HABS_SKIP_YCRUNCHER -eq 0 ]]; then
+        [[ $show_output -eq 1 ]] && echo ""
+        bench_ycruncher || true
+    fi
+
+    if [[ $HABS_SKIP_UNIXBENCH -eq 0 ]]; then
+        [[ $show_output -eq 1 ]] && echo ""
+        bench_unixbench || true
+    fi
+
+    HABS_END_TIME=$(date +%s)
+
+    # Calculate and display scores
+    calculate_scores
+    if [[ $show_output -eq 1 ]]; then
+        echo ""
+        display_scores
+    fi
+
+    # Restore stdout before JSON output
+    if [[ $json_silent -eq 1 ]]; then
+        exec 1>&3-      # Restore stdout, close fd 3
+    fi
+
+    # Output JSON if requested (writes to true stdout)
+    if [[ $HABS_JSON -eq 1 ]] || [[ -n "$HABS_OUTPUT_FILE" ]]; then
+        output_json
+    fi
+
+    # Print completion footer
+    if [[ $show_output -eq 1 ]]; then
+        print_footer
+    fi
 }
 
+# -------- Entry Point --------------------------------------------------------
 main "$@"
